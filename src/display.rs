@@ -1,8 +1,4 @@
-use crate::models::{
-    DisplayAccountInfo,
-    DisplayTransaction,
-    AccountData,
-};
+use crate::models::{AccountData, DisplayAccountInfo, DisplayTransaction};
 
 pub struct DisplayFormatter;
 
@@ -10,22 +6,19 @@ impl DisplayFormatter {
     pub fn new() -> Self {
         DisplayFormatter
     }
-    
+
     pub fn display_account_info(
         &self,
         address: &str,
         account_data: &AccountData,
-        transaction: Option<&DisplayTransaction>
+        transaction: Option<&DisplayTransaction>,
     ) {
-        let display_info = DisplayAccountInfo::from_account_data(
-            address.to_string(), 
-            account_data
-        );
-        
+        let display_info = DisplayAccountInfo::from_account_data(address.to_string(), account_data);
+
         println!("Address: {}", self.format_address(&display_info.address));
         println!("Balance: {:.6} XRP", display_info.balance_xrp);
         println!("Last Transaction:");
-        
+
         match transaction {
             Some(tx) => {
                 println!(" Hash: {}", self.format_hash(&tx.hash));
@@ -39,38 +32,35 @@ impl DisplayFormatter {
             }
         }
     }
-    
+
     fn format_address(&self, address: &str) -> String {
         if address.len() <= 12 {
             address.to_string()
         } else {
-            format!("{}...{}", &address[..6], &address[address.len()-3..])
+            format!("{}...{}", &address[..6], &address[address.len() - 3..])
         }
     }
-    
+
     fn format_hash(&self, hash: &str) -> String {
         if hash.len() <= 12 {
             hash.to_string()
         } else {
-            format!("{}...{}", &hash[..6], &hash[hash.len()-6..])
+            format!("{}...{}", &hash[..6], &hash[hash.len() - 6..])
         }
     }
     #[allow(dead_code)]
     pub fn display_balance_only(&self, address: &str, account_data: &AccountData) {
-        let display_info = DisplayAccountInfo::from_account_data(
-            address.to_string(), 
-            account_data
-        );
-        
+        let display_info = DisplayAccountInfo::from_account_data(address.to_string(), account_data);
+
         println!("Address: {}", self.format_address(address));
         println!("Balance: {:.6} XRP", display_info.balance_xrp);
     }
-    
+
     #[allow(dead_code)]
     pub fn display_error(&self, error_message: &str) {
         eprintln!("Ошибка: {}", error_message);
     }
-    
+
     #[allow(dead_code)]
     pub fn display_validation_info(&self, address: &str, is_valid: bool) {
         if is_valid {
@@ -116,7 +106,7 @@ impl Formattable for String {
         if self.len() <= 12 {
             self.clone()
         } else {
-            format!("{}...{}", &self[..6], &self[self.len()-3..])
+            format!("{}...{}", &self[..6], &self[self.len() - 3..])
         }
     }
 }
@@ -142,7 +132,7 @@ pub enum OutputColor {
 //    pub fn new(text: String, color: OutputColor) -> Self {
 //        ColoredOutput { text, color }
 //    }
-//    
+//
 //    pub fn to_string(&self) -> String {
 //        self.text.clone()
 //    }

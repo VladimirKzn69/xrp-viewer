@@ -111,12 +111,10 @@ pub struct Transaction {
 impl Transaction {
     pub fn amount_xrp(&self) -> f64 {
         match &self.amount {
-            Some(amount_str) => {
-                match amount_str.parse::<f64>() {
-                    Ok(amount_drops) => amount_drops / 1_000_000.0,
-                    Err(_) => 0.0,
-                }
-            }
+            Some(amount_str) => match amount_str.parse::<f64>() {
+                Ok(amount_drops) => amount_drops / 1_000_000.0,
+                Err(_) => 0.0,
+            },
             None => 0.0,
         }
     }
@@ -136,22 +134,24 @@ impl Transaction {
 fn format_timestamp(timestamp: u64) -> String {
     // use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use std::time::{Duration, UNIX_EPOCH};
-    
+
     let dt = UNIX_EPOCH + Duration::from_secs(timestamp);
-    
+
     match dt.duration_since(UNIX_EPOCH) {
         Ok(_) => {
             let secs = timestamp;
             let days = secs / 86400;
             let hours = (secs % 86400) / 3600;
             let minutes = (secs % 3600) / 60;
-            
-            format!("20{}-{:02}-{:02} {:02}:{:02} UTC", 
-                   24 + (days / 365), 
-                   ((days % 365) / 30) + 1, 
-                   (days % 30) + 1,
-                   hours, 
-                   minutes)
+
+            format!(
+                "20{}-{:02}-{:02} {:02}:{:02} UTC",
+                24 + (days / 365),
+                ((days % 365) / 30) + 1,
+                (days % 30) + 1,
+                hours,
+                minutes
+            )
         }
         Err(_) => "Некорректная дата".to_string(),
     }
@@ -189,7 +189,10 @@ impl DisplayTransaction {
                 amount_xrp: tx.amount_xrp(),
                 timestamp: tx.formatted_date(),
                 from: tx.account.clone(),
-                to: tx.destination.clone().unwrap_or_else(|| "Неизвестно".to_string()),
+                to: tx
+                    .destination
+                    .clone()
+                    .unwrap_or_else(|| "Неизвестно".to_string()),
             })
         } else {
             None
