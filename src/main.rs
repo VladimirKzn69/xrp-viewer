@@ -6,10 +6,13 @@ use std::process; // Для exit
 mod api;
 mod display;
 mod models;
+mod config;
 
 // Подключаем конкретные элементы из модулей
 use api::XrpApi;
 use display::DisplayFormatter;
+// Импортируем нужные функции из config
+use config::{load_env_file, get_private_key};
 
 /// XRP кошелек: просмотр баланса и отправка транзакций.
 #[derive(Debug, Parser)]
@@ -57,16 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             amount,
             key_file,
         } => {
-            // Пока просто заглушка
-            println!("Команда 'send' вызвана:");
-            println!("  From: {}", from);
-            println!("  To: {}", to);
-            println!("  Amount: {} XRP", amount);
-            println!("  Key File: {}", key_file);
-            println!("Реализация отправки будет добавлена позже.");
-
-            // Здесь будет вызов функции handle_send(...)
-            // handle_send(from, to, amount, key_file).await?;
+            handle_send(from, to, amount, key_file).await?;
         }
     }
 
@@ -103,7 +97,6 @@ async fn handle_balance(address: String) -> Result<(), Box<dyn std::error::Error
                 Err(e) => {
                     log::error!("Ошибка получения транзакций: {}", e);
                     eprintln!("Ошибка: Не удается подключиться к API");
-                    // Используем process::exit для явного кода ошибки
                     process::exit(1); 
                 }
             }
@@ -117,21 +110,48 @@ async fn handle_balance(address: String) -> Result<(), Box<dyn std::error::Error
             } else {
                 eprintln!("Ошибка: Не удается подключиться к API");
             }
-            // Используем process::exit для явного кода ошибки
             process::exit(1); 
         }
     }
 }
 
-// Обрабатывает подкоманду 'send' (заглушка)
-// async fn handle_send(
-//     from: String,
-//     to: String,
-//     amount: f64,
-//     key_file: String,
-// ) -> Result<(), Box<dyn std::error::Error>> {
-//     // TODO: Реализация логики отправки
-//     println!("Отправка {} XRP с {} на {}", amount, from, to);
-//     println!("Файл с ключом: {}", key_file);
-//     Ok(())
-// }
+
+/// Обрабатывает подкоманду 'send'
+async fn handle_send(
+    from: String,
+    to: String,
+    amount: f64,
+    key_file: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Начинаем процесс отправки...");
+    println!("  From: {}", from);
+    println!("  To: {}", to);
+    println!("  Amount: {} XRP", amount);
+    println!("  Key File: {}", key_file);
+
+    // 1. Загрузка .env файла
+    load_env_file(&key_file)?;
+
+    // 2. Получение приватного ключа
+    let private_key = get_private_key()?;
+    println!("Приватный ключ успешно загружен.");
+
+    // 3. Создание клиента API
+    let api_client = XrpApi::new()?;
+    println!("Клиент API создан.");
+
+    // --- Здесь будет основная логика подписания и отправки ---
+    // TODO: Получить sequence, fee
+    // TODO: Создать транзакцию
+    // TODO: Подписать транзакцию
+    // TODO: Отправить транзакцию
+    // TODO: Обработать результат
+    // ---------------------------------------------------------
+
+    // Пока что просто симулируем успех
+    println!("Транзакция успешно отправлена! (Симуляция)");
+    // В реальной реализации здесь будет хэш транзакции
+    // println!("Хэш транзакции: {}", transaction_hash); 
+
+    Ok(())
+}
