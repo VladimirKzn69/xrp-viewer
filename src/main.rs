@@ -1,6 +1,6 @@
 // main.rs - точка входа в программу
 use clap::Parser;
-use std::process; // Для exit
+// use std::process; // Для exit - не нужен, если мы используем anyhow и возвращаем ошибку из main
 
 // Подключаем наши модули
 mod api;
@@ -13,6 +13,8 @@ use api::XrpApi;
 use display::DisplayFormatter;
 // Импортируем нужные функции из config
 use config::{load_env_file, get_private_key};
+// Для удобной обработки ошибок
+use anyhow::{Context, Result}; 
 
 /// XRP кошелек: просмотр баланса и отправка транзакций.
 #[derive(Debug, Parser)]
@@ -43,7 +45,8 @@ enum Cli {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+// Меняем тип ошибки на anyhow::Result
+async fn main() -> Result<()> { 
     // Инициализация логирования
     env_logger::init();
 
@@ -52,7 +55,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli {
         Cli::Balance { address } => {
-            handle_balance(address).await?;
+            // handle_balance теперь тоже возвращает anyhow::Result
+            handle_balance(address).await?; 
         }
         Cli::Send {
             from,
@@ -60,19 +64,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             amount,
             key_file,
         } => {
-            handle_send(from, to, amount, key_file).await?;
+            // handle_send теперь тоже возвращает anyhow::Result
+            handle_send(from, to, amount, key_file).await?; 
         }
     }
 
-    Ok(())
+    Ok(()) // Успешное завершение программы
 }
 
 /// Обрабатывает подкоманду 'balance'
-async fn handle_balance(address: String) -> Result<(), Box<dyn std::error::Error>> {
+// Меняем тип ошибки на anyhow::Result
+async fn handle_balance(address: String) -> Result<()> { 
     log::debug!("Получен адрес для баланса: {}", address);
 
     // Создаем клиент API
-    let api_client = XrpApi::new()?;
+    // Используем .context для лучшего сообщения об ошибке
+    let api_client = XrpApi::new().context("Не удалось создать клиент API")?; 
 
     // Получаем информацию о кошельке
     match api_client.get_account_info(&address).await {
@@ -92,12 +99,14 @@ async fn handle_balance(address: String) -> Result<(), Box<dyn std::error::Error
                         transaction.as_ref(),
                     );
 
-                    Ok(())
+                    Ok(()) // Успех
                 }
                 Err(e) => {
                     log::error!("Ошибка получения транзакций: {}", e);
+                    // Используем eprintln для вывода ошибки пользователю
                     eprintln!("Ошибка: Не удается подключиться к API");
-                    process::exit(1); 
+                    // Возвращаем ошибку с помощью anyhow
+                    Err(anyhow::anyhow!("Ошибка получения транзакций")) 
                 }
             }
         }
@@ -110,35 +119,47 @@ async fn handle_balance(address: String) -> Result<(), Box<dyn std::error::Error
             } else {
                 eprintln!("Ошибка: Не удается подключиться к API");
             }
-            process::exit(1); 
+            // Возвращаем ошибку с помощью anyhow
+            Err(anyhow::anyhow!("Ошибка получения информации о кошельке"))
         }
     }
 }
 
 
 /// Обрабатывает подкоманду 'send'
+// Меняем тип ошибки на anyhow::Result
 async fn handle_send(
     from: String,
     to: String,
     amount: f64,
     key_file: String,
-) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Начинаем процесс отправки...");
-    println!("  From: {}", from);
-    println!("  To: {}", to);
-    println!("  Amount: {} XRP", amount);
-    println!("  Key File: {}", key_file);
+) -> Result<()> {
+    log::info!("Начинаем процесс отправки...");
+    log::debug!("From: {}, To: {}, Amount: {}, Key File: {}", from, to, amount, key_file);
 
     // 1. Загрузка .env файла
-    load_env_file(&key_file)?;
+    load_env_file(&key_file)
+        .with_context(|| format!("Не удалось загрузить файл конфигурации '{}'", key_file))?;
 
     // 2. Получение приватного ключа
-    let private_key = get_private_key()?;
-    println!("Приватный ключ успешно загружен.");
+    let private_key = get_private_key()
+        .context("Не удалось получить приватный ключ из конфигурации")?;
+    
+    // 3. Вывод информации (временно, для проверки)
+    log::info!("✅ .env файл '{}' успешно загружен.", key_file);
+    // ВАЖНО: Никогда не выводите приватный ключ в логи или на экран!
+    // Для отладки показываем только часть ключа
+    if private_key.len() > 6 {
+        println!("🔑 Приватный ключ загружен (первые 6 символов): {}...", &private_key[..6]);
+    } else {
+         println!("🔑 Приватный ключ загружен (ключ короткий).");
+    }
 
-    // 3. Создание клиента API
-    let api_client = XrpApi::new()?;
-    println!("Клиент API создан.");
+    println!("📤 Подготовка к отправке {} XRP с {} на {}", amount, from, to);
+
+    // 4. Создание клиента API
+    let api_client = XrpApi::new().context("Не удалось создать клиент API")?;
+    log::debug!("Клиент API создан.");
 
     // --- Здесь будет основная логика подписания и отправки ---
     // TODO: Получить sequence, fee
@@ -149,9 +170,9 @@ async fn handle_send(
     // ---------------------------------------------------------
 
     // Пока что просто симулируем успех
-    println!("Транзакция успешно отправлена! (Симуляция)");
+    println!("✅ Транзакция успешно отправлена! (Симуляция)");
     // В реальной реализации здесь будет хэш транзакции
     // println!("Хэш транзакции: {}", transaction_hash); 
 
-    Ok(())
+    Ok(()) // Успех
 }
