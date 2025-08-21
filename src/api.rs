@@ -2,12 +2,10 @@
 use reqwest::Client;
 use serde_json::Value;
 use std::time::Duration;
-
 use crate::models::{
     AccountInfoRequest, AccountInfoResponse, AccountTxRequest, AccountTxResponse,
-    DisplayTransaction,
+    DisplayTransaction, ServerStateRequest, ServerStateResponse, SubmitRequest, SubmitResponse, // Добавлены новые модели
 };
-
 use anyhow::{Context, Result};
 
 pub struct XrpApi {
@@ -22,18 +20,15 @@ impl XrpApi {
             .user_agent("xrp-viewer/0.1.0")
             .build()
             .context("Не удалось создать HTTP-клиент")?;
-
         Ok(XrpApi {
             client,
-            base_url: "https://s1.ripple.com:51234  ".to_string(),
+            base_url: "https://s1.ripple.com:51234".to_string(), // Исправлен пробел в конце URL
         })
     }
 
     pub async fn get_account_info(&self, address: &str) -> Result<AccountInfoResponse> {
         let request = AccountInfoRequest::new(address.to_string());
-
         log::debug!("Отправка запроса account_info для адреса: {}", address);
-
         let response = self
             .client
             .post(&self.base_url)
@@ -41,7 +36,6 @@ impl XrpApi {
             .send()
             .await
             .context("Не удалось отправить запрос к API")?;
-
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response
@@ -51,17 +45,14 @@ impl XrpApi {
             log::error!("API вернул ошибку {}: {}", status, error_text);
             anyhow::bail!("API вернул ошибку {}: {}", status, error_text);
         }
-
         let account_info: AccountInfoResponse = response
             .json()
             .await
             .context("Не удалось разобрать ответ API")?;
-
         if account_info.result.status != "success" {
             log::error!("API вернул статус: {}", account_info.result.status);
             anyhow::bail!("API вернул статус: {}", account_info.result.status);
         }
-
         log::debug!("Получен ответ account_info для адреса: {}", address);
         Ok(account_info)
     }
@@ -71,9 +62,7 @@ impl XrpApi {
         address: &str,
     ) -> Result<Option<DisplayTransaction>> {
         let request = AccountTxRequest::new(address.to_string());
-
         log::debug!("Отправка запроса account_tx для адреса: {}", address);
-
         let response = self
             .client
             .post(&self.base_url)
@@ -81,33 +70,26 @@ impl XrpApi {
             .send()
             .await
             .context("Не удалось отправить запрос к API")?;
-
         if !response.status().is_success() {
             let status = response.status();
             log::error!("API вернул ошибку: {}", status);
             anyhow::bail!("API вернул ошибку: {}", status);
         }
-
         let account_tx: AccountTxResponse = response
             .json()
             .await
             .context("Не удалось разобрать ответ API")?;
-
         if account_tx.result.status != "success" {
             log::error!("API вернул статус: {}", account_tx.result.status);
             anyhow::bail!("API вернул статус: {}", account_tx.result.status);
         }
-
         if account_tx.result.transactions.is_empty() {
             log::debug!("У кошелька нет транзакций");
             return Ok(None);
         }
-
         let first_tx_wrapper = &account_tx.result.transactions[0];
         let transaction = &first_tx_wrapper.tx;
-
         let display_tx = DisplayTransaction::from_transaction(transaction);
-
         log::debug!("Получена последняя транзакция для адреса: {}", address);
         Ok(display_tx)
     }
@@ -124,19 +106,87 @@ impl XrpApi {
             .send()
             .await
             .context("Не удалось отправить запрос к API")?;
-
         if !response.status().is_success() {
             let status = response.status();
             log::error!("API вернул ошибку: {}", status);
             anyhow::bail!("API вернул ошибку: {}", status);
         }
-
         let result: T = response
             .json()
             .await
             .context("Не удалось разобрать ответ API")?;
-
         Ok(result)
+    }
+
+    // --- Добавленные методы ---
+
+    pub async fn get_server_state(&self) -> Result<ServerStateResponse> {
+        let request = ServerStateRequest::new();
+        log::debug!("Отправка запроса server_state");
+
+         let response = self
+            .client
+            .post(&self.base_url)
+            .json(&request)
+            .send()
+            .await
+            .context("Не удалось отправить запрос server_state к API")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+             log::error!("API вернул ошибку server_state: {}", status);
+            anyhow::bail!("API вернул ошибку server_state: {}", status);
+        }
+
+        let state_response: ServerStateResponse = response
+            .json()
+            .await
+            .context("Не удалось разобрать ответ server_state API")?;
+
+        if state_response.result.status != "success" {
+            log::error!("API server_state вернул статус: {}", state_response.result.status);
+            anyhow::bail!("API server_state вернул статус: {}", state_response.result.status);
+        }
+
+        log::debug!("Получен ответ server_state");
+        Ok(state_response)
+    }
+
+    pub async fn submit_transaction(&self, tx_blob: &str) -> Result<SubmitResponse> {
+        let request = SubmitRequest::new(tx_blob.to_string());
+        log::debug!("Отправка запроса submit для транзакции");
+
+        let response = self
+            .client
+            .post(&self.base_url)
+            .json(&request)
+            .send()
+            .await
+            .context("Не удалось отправить запрос submit к API")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Неизвестная ошибка".to_string());
+            log::error!("API вернул ошибку submit {}: {}", status, error_text);
+            anyhow::bail!("API вернул ошибку submit {}: {}", status, error_text);
+        }
+
+        let submit_response: SubmitResponse = response
+            .json()
+            .await
+            .context("Не удалось разобрать ответ submit API")?;
+
+         if submit_response.result.status != "success" {
+            log::error!("API submit вернул статус: {}", submit_response.result.status);
+            anyhow::bail!("API submit вернул статус: {}", submit_response.result.status);
+        }
+
+
+        log::debug!("Получен ответ submit");
+        Ok(submit_response)
     }
 }
 
