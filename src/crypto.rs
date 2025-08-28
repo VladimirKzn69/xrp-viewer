@@ -13,7 +13,7 @@ use crate::models::{TransactionCommonFields, PaymentFields}; // Предпола
 /// Декодирует WIF (Wallet Import Format) приватный ключ в байты
 pub fn decode_wif(wif: &str) -> Result<Vec<u8>> {
     let data = wif.from_base58()
-        .map_err(|e| anyhow::anyhow!("Ошибка декодирования WIF из Base58: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Ошибка декодирования WIF из Base58: {:?}", e))?;
     if data.len() < 5 {
         anyhow::bail!("WIF ключ слишком короткий");
     }
@@ -37,10 +37,19 @@ pub fn decode_wif(wif: &str) -> Result<Vec<u8>> {
 
 /// Получает публичный ключ из приватного (в байтах)
 pub fn derive_public_key(private_key_bytes: &[u8]) -> Result<Vec<u8>> {
+    // 1. Создаем SecretKey из байтов
     let secret_key = SecretKey::from_bytes(private_key_bytes.into())
-        .map_err(|e| anyhow::anyhow!("Ошибка создания SecretKey: {}", e))?;
-    let verifying_key = VerifyingKey::from(&secret_key);
+        .map_err(|e| anyhow::anyhow!("Ошибка создания SecretKey: {:?}", e))?; // <-- {:?} для ошибки
+
+    // 2. Создаем SigningKey из SecretKey
+    let signing_key = SigningKey::from(secret_key);
+
+    // 3. Получаем VerifyingKey из SigningKey
+    let verifying_key = signing_key.verifying_key();
+
+    // 4. Кодируем публичный ключ в несжатом формате
     let encoded_point = verifying_key.to_encoded_point(false); // false = uncompressed
+
     Ok(encoded_point.as_bytes().to_vec())
 }
 

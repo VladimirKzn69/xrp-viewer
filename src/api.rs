@@ -16,7 +16,7 @@ pub struct XrpApi {
 impl XrpApi {
     pub fn new() -> Result<Self> {
         let client = Client::builder()
-            .timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(15))
             .user_agent("xrp-viewer/0.1.0")
             .build()
             .context("Не удалось создать HTTP-клиент")?;
