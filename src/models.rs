@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap; // Добавлено для Transaction
+// use std::collections::BTreeMap; // Добавлено для Transaction
 
 // --- Структуры для account_info ---
 #[derive(Serialize, Debug)]
@@ -44,8 +44,8 @@ pub struct AccountData {
     // Добавляем sequence
     #[serde(rename = "Sequence")]
     pub sequence: Option<u32>, // Может отсутствовать у неактивированных аккаунтов
-    // #[serde(rename = "Account")]
-    // pub account: String,
+                               // #[serde(rename = "Account")]
+                               // pub account: String,
 }
 
 impl AccountData {
@@ -315,7 +315,7 @@ impl SubmitResult {
         if let Some(hash) = &self.hash {
             Some(hash.clone())
         } else if let Some(tx_json) = &self.tx_json {
-             if let Some(hash_val) = tx_json.get("hash") {
+            if let Some(hash_val) = tx_json.get("hash") {
                 hash_val.as_str().map(|s| s.to_string())
             } else {
                 None

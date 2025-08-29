@@ -2,13 +2,13 @@
 
 use anyhow::{Context, Result};
 use dotenv::from_filename; // Импортируем функцию из dotenv
-use std::env;              // Для доступа к переменным окружения
+use std::env; // Для доступа к переменным окружения
 
 /// Загружает переменные окружения из указанного .env файла.
-/// 
+///
 /// # Аргументы
 /// * `file_path` - Путь к .env файлу.
-/// 
+///
 /// # Ошибки
 /// Возвращает ошибку, если файл не найден или не может быть прочитан.
 pub fn load_env_file(file_path: &str) -> Result<()> {
@@ -21,10 +21,10 @@ pub fn load_env_file(file_path: &str) -> Result<()> {
 }
 
 /// Получает значение переменной окружения.
-/// 
+///
 /// # Аргументы
 /// * `key` - Имя переменной окружения.
-/// 
+///
 /// # Возвращает
 /// `Some(value)`, если переменная существует, `None` если не существует.
 pub fn get_env_var(key: &str) -> Option<String> {
@@ -42,13 +42,12 @@ pub fn get_env_var(key: &str) -> Option<String> {
 }
 
 /// Получает приватный ключ из переменной окружения `PRIVATE_KEY`.
-/// 
+///
 /// # Возвращает
 /// `Ok(String)` с приватным ключом, если он найден.
 /// `Err(...)` если переменная не найдена или пуста.
 pub fn get_private_key() -> Result<String> {
-    let key = get_env_var("PRIVATE_KEY")
-        .context("Переменная окружения PRIVATE_KEY не найдена")?;
+    let key = get_env_var("PRIVATE_KEY").context("Переменная окружения PRIVATE_KEY не найдена")?;
 
     if key.is_empty() {
         anyhow::bail!("Переменная окружения PRIVATE_KEY пуста");
@@ -93,7 +92,10 @@ mod tests {
         // Попытка получить ключ должна завершиться ошибкой
         let result = get_private_key();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("PRIVATE_KEY не найдена"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("PRIVATE_KEY не найдена"));
     }
 
     #[test]
@@ -108,7 +110,10 @@ mod tests {
         // Попытка получить ключ должна завершиться ошибкой
         let result = get_private_key();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("PRIVATE_KEY пуста"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("PRIVATE_KEY пуста"));
 
         Ok(())
     }

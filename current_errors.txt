@@ -1,0 +1,237 @@
+===== xrp-viewer: Current Compilation Errors =====
+   Compiling cfg-if v1.0.1
+   Compiling zeroize v1.8.1
+   Compiling smallvec v1.15.1
+   Compiling stable_deref_trait v1.2.0
+   Compiling libc v0.2.174
+   Compiling typenum v1.18.0
+   Compiling zerofrom v0.1.6
+   Compiling bytes v1.10.1
+   Compiling pin-project-lite v0.2.16
+   Compiling futures-core v0.3.31
+   Compiling subtle v2.6.1
+   Compiling yoke v0.8.0
+   Compiling const-oid v0.9.6
+   Compiling scopeguard v1.2.0
+   Compiling itoa v1.0.15
+   Compiling once_cell v1.21.3
+   Compiling lock_api v0.4.13
+   Compiling fnv v1.0.7
+   Compiling zerovec v0.11.2
+   Compiling serde v1.0.219
+   Compiling litemap v0.8.0
+   Compiling writeable v0.6.1
+   Compiling zerotrie v0.2.2
+   Compiling pin-utils v0.1.0
+   Compiling memchr v2.7.5
+   Compiling generic-array v0.14.7
+   Compiling http v1.3.1
+   Compiling futures-task v0.3.31
+   Compiling futures-util v0.3.31
+   Compiling tracing-core v0.1.34
+   Compiling parking_lot_core v0.9.11
+   Compiling parking_lot v0.12.4
+   Compiling mio v1.0.4
+   Compiling socket2 v0.6.0
+   Compiling signal-hook-registry v1.4.5
+   Compiling tinystr v0.8.1
+   Compiling crypto-common v0.1.6
+   Compiling block-buffer v0.10.4
+   Compiling getrandom v0.2.16
+   Compiling tokio v1.47.1
+   Compiling rand_core v0.6.4
+   Compiling digest v0.10.7
+   Compiling icu_locale_core v2.0.0
+   Compiling potential_utf v0.1.2
+   Compiling http-body v1.0.1
+   Compiling der v0.7.10
+   Compiling bitflags v2.9.1
+   Compiling icu_collections v2.0.0
+   Compiling log v0.4.27
+   Compiling hashbrown v0.15.4
+   Compiling futures-sink v0.3.31
+   Compiling percent-encoding v2.3.1
+   Compiling equivalent v1.0.2
+   Compiling foreign-types-shared v0.1.1
+   Compiling foreign-types v0.3.2
+   Compiling icu_provider v2.0.0
+   Compiling tracing v0.1.41
+   Compiling indexmap v2.10.0
+   Compiling openssl-sys v0.9.109
+   Compiling icu_normalizer_data v2.0.0
+   Compiling icu_properties_data v2.0.1
+   Compiling try-lock v0.2.5
+   Compiling atomic-waker v1.1.2
+   Compiling slab v0.4.10
+   Compiling base16ct v0.2.0
+   Compiling tower-service v0.3.3
+   Compiling utf8parse v0.2.2
+   Compiling want v0.3.1
+   Compiling spki v0.7.3
+   Compiling anstyle-parse v0.2.7
+   Compiling icu_properties v2.0.1
+   Compiling icu_normalizer v2.0.0
+   Compiling httparse v1.10.1
+   Compiling serdect v0.2.0
+   Compiling ff v0.13.1
+   Compiling aho-corasick v1.1.3
+   Compiling futures-channel v0.3.31
+   Compiling regex-syntax v0.8.5
+   Compiling colorchoice v1.0.4
+   Compiling is_terminal_polyfill v1.70.1
+   Compiling openssl-probe v0.1.6
+   Compiling anstyle v1.0.11
+   Compiling anstyle-query v1.1.3
+   Compiling anstream v0.6.19
+   Compiling group v0.13.0
+   Compiling sec1 v0.7.3
+   Compiling pkcs8 v0.10.2
+   Compiling openssl v0.10.73
+   Compiling form_urlencoded v1.2.1
+   Compiling hmac v0.12.1
+   Compiling crypto-bigint v0.5.5
+   Compiling sync_wrapper v1.0.2
+   Compiling ipnet v2.11.0
+   Compiling base64 v0.22.1
+   Compiling idna_adapter v1.2.1
+   Compiling ryu v1.0.20
+   Compiling tower-layer v0.3.3
+   Compiling regex-automata v0.4.9
+   Compiling utf8_iter v1.0.4
+   Compiling rfc6979 v0.4.0
+   Compiling idna v1.0.3
+   Compiling http-body-util v0.1.3
+   Compiling signature v2.2.0
+   Compiling cpufeatures v0.2.17
+   Compiling clap_lex v0.7.5
+   Compiling strsim v0.11.1
+   Compiling elliptic-curve v0.13.8
+   Compiling iri-string v0.7.8
+   Compiling clap_builder v4.5.43
+   Compiling sha2 v0.10.9
+   Compiling ecdsa v0.16.9
+   Compiling url v2.5.4
+   Compiling tokio-util v0.7.15
+   Compiling tower v0.5.2
+   Compiling serde_json v1.0.142
+   Compiling h2 v0.4.11
+   Compiling regex v1.11.1
+   Compiling native-tls v0.2.14
+   Compiling tokio-native-tls v0.3.1
+   Compiling env_filter v0.1.3
+   Compiling tower-http v0.6.6
+   Compiling serde_urlencoded v0.7.1
+   Compiling rustls-pki-types v1.12.0
+   Compiling encoding_rs v0.8.35
+   Compiling jiff v0.2.15
+   Compiling mime v0.3.17
+   Compiling thiserror v2.0.12
+   Compiling clap v4.5.43
+   Compiling k256 v0.13.4
+   Compiling anyhow v1.0.98
+   Compiling crc32fast v1.5.0
+   Compiling dotenv v0.15.0
+   Compiling base58 v0.2.0
+   Compiling hex v0.4.3
+   Compiling hyper v1.6.0
+   Compiling hyper-util v0.1.16
+   Compiling hyper-tls v0.6.0
+   Compiling env_logger v0.11.8
+   Compiling reqwest v0.12.22
+   Compiling xrp-viewer v0.2.0 (/home/vladimirn/prj/xrp-viewer)
+warning: unused import: `std::collections::BTreeMap`
+ --> src/models.rs:2:5
+  |
+2 | use std::collections::BTreeMap; // Добавлено для Transaction
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `Sha512`
+  --> src/crypto.rs:10:20
+   |
+10 | use sha2::{Sha256, Sha512, Digest};
+   |                    ^^^^^^
+
+warning: unused import: `Context`
+ --> src/xrp_codec.rs:6:14
+  |
+6 | use anyhow::{Context, Result, anyhow};
+  |              ^^^^^^^
+
+warning: unused import: `std::collections::BTreeMap`
+ --> src/xrp_codec.rs:7:5
+  |
+7 | use std::collections::BTreeMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ToBase58`
+ --> src/xrp_codec.rs:9:26
+  |
+9 | use base58::{FromBase58, ToBase58};
+  |                          ^^^^^^^^
+
+warning: unused import: `SubmitResult`
+  --> src/main.rs:22:54
+   |
+22 | use models::{TransactionCommonFields, PaymentFields, SubmitResult};
+   |                                                      ^^^^^^^^^^^^
+
+error[E0716]: temporary value dropped while borrowed
+   --> src/main.rs:224:21
+    |
+224 |         .unwrap_or(&"0.000012".to_string());
+    |                     ^^^^^^^^^^^^^^^^^^^^^^ - temporary value is freed at the end of this statement
+    |                     |
+    |                     creates a temporary value which is freed while still in use
+225 |     let recommended_fee = (base_fee_str.parse::<f64>().unwrap_or(0.000012) * 1_000_000.0) as u64;
+    |                            ------------ borrow later used here
+    |
+    = note: consider using a `let` binding to create a longer lived value
+
+error[E0277]: `FromBase58Error` doesn't implement `std::fmt::Display`
+  --> src/crypto.rs:20:80
+   |
+20 |         .map_err(|e| anyhow::anyhow!("Ошибка декодирования WIF из Base58: {}", e))?;
+   |                                                                           --   ^ `FromBase58Error` cannot be formatted with the default formatter
+   |                                                                           |
+   |                                                                           required by this formatting parameter
+   |
+   = help: the trait `std::fmt::Display` is not implemented for `FromBase58Error`
+   = note: in format strings you may be able to use `{:?}` (or {:#?} for pretty-print) instead
+   = note: this error originates in the macro `$crate::__export::format_args` which comes from the expansion of the macro `anyhow::anyhow` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `k256::elliptic_curve::PublicKey<Secp256k1>: From<&SecretKey<Secp256k1>>` is not satisfied
+  --> src/crypto.rs:65:22
+   |
+65 |     let public_key = PublicKey::from(&secret_key);
+   |                      ^^^^^^^^^ the trait `From<&SecretKey<Secp256k1>>` is not implemented for `k256::elliptic_curve::PublicKey<Secp256k1>`
+   |
+   = help: the following other types implement trait `From<T>`:
+             `k256::elliptic_curve::PublicKey<Secp256k1>` implements `From<&VerifyingKey>`
+             `k256::elliptic_curve::PublicKey<Secp256k1>` implements `From<VerifyingKey>`
+
+error[E0277]: the trait bound `ecdsa::verifying::VerifyingKey<Secp256k1>: From<&SecretKey<Secp256k1>>` is not satisfied
+  --> src/crypto.rs:66:25
+   |
+66 |     let verifying_key = VerifyingKey::from(&secret_key);
+   |                         ^^^^^^^^^^^^ the trait `From<&SecretKey<Secp256k1>>` is not implemented for `ecdsa::verifying::VerifyingKey<Secp256k1>`
+   |
+   = help: the following other types implement trait `From<T>`:
+             `ecdsa::verifying::VerifyingKey<C>` implements `From<&ecdsa::signing::SigningKey<C>>`
+             `ecdsa::verifying::VerifyingKey<C>` implements `From<&k256::elliptic_curve::PublicKey<C>>`
+             `ecdsa::verifying::VerifyingKey<C>` implements `From<ecdsa::signing::SigningKey<C>>`
+             `ecdsa::verifying::VerifyingKey<C>` implements `From<k256::elliptic_curve::PublicKey<C>>`
+
+warning: unused variable: `transaction_blob`
+   --> src/crypto.rs:132:5
+    |
+132 |     transaction_blob: Vec<u8>,
+    |     ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_transaction_blob`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+Some errors have detailed explanations: E0277, E0716.
+For more information about an error, try `rustc --explain E0277`.
+warning: `xrp-viewer` (bin "xrp-viewer") generated 7 warnings
+error: could not compile `xrp-viewer` (bin "xrp-viewer") due to 4 previous errors; 7 warnings emitted

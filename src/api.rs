@@ -1,12 +1,19 @@
 // use reqwest::{Client, Error as ReqwestError};
+use crate::models::{
+    AccountInfoRequest,
+    AccountInfoResponse,
+    AccountTxRequest,
+    AccountTxResponse,
+    DisplayTransaction,
+    ServerStateRequest,
+    ServerStateResponse,
+    SubmitRequest,
+    SubmitResponse, // Добавлены новые модели
+};
+use anyhow::{Context, Result};
 use reqwest::Client;
 use serde_json::Value;
 use std::time::Duration;
-use crate::models::{
-    AccountInfoRequest, AccountInfoResponse, AccountTxRequest, AccountTxResponse,
-    DisplayTransaction, ServerStateRequest, ServerStateResponse, SubmitRequest, SubmitResponse, // Добавлены новые модели
-};
-use anyhow::{Context, Result};
 
 pub struct XrpApi {
     client: Client,
@@ -124,7 +131,7 @@ impl XrpApi {
         let request = ServerStateRequest::new();
         log::debug!("Отправка запроса server_state");
 
-         let response = self
+        let response = self
             .client
             .post(&self.base_url)
             .json(&request)
@@ -134,7 +141,7 @@ impl XrpApi {
 
         if !response.status().is_success() {
             let status = response.status();
-             log::error!("API вернул ошибку server_state: {}", status);
+            log::error!("API вернул ошибку server_state: {}", status);
             anyhow::bail!("API вернул ошибку server_state: {}", status);
         }
 
@@ -144,8 +151,14 @@ impl XrpApi {
             .context("Не удалось разобрать ответ server_state API")?;
 
         if state_response.result.status != "success" {
-            log::error!("API server_state вернул статус: {}", state_response.result.status);
-            anyhow::bail!("API server_state вернул статус: {}", state_response.result.status);
+            log::error!(
+                "API server_state вернул статус: {}",
+                state_response.result.status
+            );
+            anyhow::bail!(
+                "API server_state вернул статус: {}",
+                state_response.result.status
+            );
         }
 
         log::debug!("Получен ответ server_state");
@@ -179,11 +192,16 @@ impl XrpApi {
             .await
             .context("Не удалось разобрать ответ submit API")?;
 
-         if submit_response.result.status != "success" {
-            log::error!("API submit вернул статус: {}", submit_response.result.status);
-            anyhow::bail!("API submit вернул статус: {}", submit_response.result.status);
+        if submit_response.result.status != "success" {
+            log::error!(
+                "API submit вернул статус: {}",
+                submit_response.result.status
+            );
+            anyhow::bail!(
+                "API submit вернул статус: {}",
+                submit_response.result.status
+            );
         }
-
 
         log::debug!("Получен ответ submit");
         Ok(submit_response)
