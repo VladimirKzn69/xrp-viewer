@@ -60,7 +60,7 @@ pub fn get_private_key() -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{env, fs};
+    use std::{env, io::Write};
     use tempfile::NamedTempFile; // Для создания временных файлов в тестах
 
     #[test]

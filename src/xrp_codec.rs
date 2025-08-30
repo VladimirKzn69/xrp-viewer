@@ -36,7 +36,7 @@ pub enum FieldType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FieldId {
     // Common fields
-    TransactionType = 0x1002,    // (16, 2) UInt16
+    TransactionType = 0x0102,    // (16, 2) UInt16
     Flags = 0x0202,              // (2, 2) UInt32
     SourceTag = 0x0203,          // (2, 3) UInt32
     Sequence = 0x0204,           // (2, 4) UInt32
@@ -53,23 +53,26 @@ pub enum FieldId {
 }
 
 impl FieldId {
-    /// Получить байты для записи в бинарный формат
-    pub fn to_bytes(self) -> Vec<u8> {
-        let value = self as u32;
-        let type_code = (value >> 8) as u8;
-        let field_code = (value & 0xFF) as u8;
-
-        // Правила кодирования Field ID:
-        // - Если оба кода < 16: один байт (type << 4 | field)
-        // - Если type < 16, field >= 16: два байта
-        // - Если type >= 16, field < 16: два байта
-        // - Если оба >= 16: три байта
-
-        match (type_code < 16, field_code < 16) {
-            (true, true) => vec![(type_code << 4) | field_code],
-            (true, false) => vec![type_code << 4, field_code],
-            (false, true) => vec![field_code, type_code],
-            (false, false) => vec![0, type_code, field_code],
+    /// Конвертировать Field ID в байты для сериализации
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let value = *self as u16;
+        // ВАЖНО: в вашем enum значения хранятся как 0xTTFF (type, field)
+        let type_code = (value >> 8) & 0xFF;  // Старший байт = type
+        let field_code = value & 0xFF;         // Младший байт = field
+        
+        // XRP Binary Codec правила:
+        if type_code < 16 && field_code < 16 {
+            // Однобайтовый формат: (type << 4) | field
+            vec![(type_code << 4 | field_code) as u8]
+        } else if type_code >= 16 && field_code < 16 {
+            // Двухбайтовый: сначала field (с 0 в старших битах), затем type
+            vec![field_code as u8, type_code as u8]
+        } else if type_code < 16 && field_code >= 16 {
+            // Двухбайтовый: type в старших 4 битах первого байта, затем field
+            vec![(type_code << 4) as u8, field_code as u8]
+        } else {
+            // Трёхбайтовый: 0x00, type, field
+            vec![0x00, type_code as u8, field_code as u8]
         }
     }
 }
@@ -215,6 +218,10 @@ impl PaymentTransaction {
     pub fn serialize_for_signing(&self) -> Result<Vec<u8>> {
         let mut codec = XrpBinaryCodec::new();
 
+        // Отладка
+        let tt_bytes = FieldId::TransactionType.to_bytes();
+        println!("TransactionType Field ID bytes: {:?}", tt_bytes);
+
         // ВАЖНО: Поля должны быть в каноническом порядке!
         // Порядок определяется значением FieldId (от меньшего к большему)
 
@@ -317,55 +324,10 @@ impl PaymentTransaction {
 // =====================================
 
 /// Декодировать XRP адрес в 20-байтный Account ID
-/// ОБНОВЛЕНО: поддержка разных версий адресов
+/// ИСПРАВЛЕНО: используем правильную реализацию из crypto модуля
 pub fn decode_address_to_account_id(address: &str) -> Result<Vec<u8>> {
-    // Проверка префикса
-    if !address.starts_with('r') && !address.starts_with('X') {
-        return Err(anyhow!("XRP адрес должен начинаться с 'r' или 'X'"));
-    }
-
-    // Base58 декодирование
-    let decoded = address
-        .from_base58()
-        .map_err(|e| anyhow!("Ошибка декодирования Base58: {:?}", e))?;
-
-    // Проверка минимальной длины
-    if decoded.len() < 21 {
-        return Err(anyhow!("Декодированный адрес слишком короткий: {} байт", decoded.len()));
-    }
-
-    // Для стандартных адресов проверяем контрольную сумму
-    if decoded.len() == 25 {
-        let payload = &decoded[..21];
-        let checksum = &decoded[21..25];
-
-        let hash1 = Sha256::digest(payload);
-        let hash2 = Sha256::digest(&hash1);
-        let calculated_checksum = &hash2[..4];
-
-        if checksum != calculated_checksum {
-            return Err(anyhow!("Неверная контрольная сумма адреса"));
-        }
-    } else if decoded.len() > 25 {
-        // Для более длинных адресов также проверяем последние 4 байта как контрольную сумму
-        let payload_len = decoded.len() - 4;
-        let payload = &decoded[..payload_len];
-        let checksum = &decoded[payload_len..];
-
-        let hash1 = Sha256::digest(payload);
-        let hash2 = Sha256::digest(&hash1);
-        let calculated_checksum = &hash2[..4];
-
-        if checksum != calculated_checksum {
-            return Err(anyhow!("Неверная контрольная сумма адреса"));
-        }
-    }
-
-    // Логируем версию для отладки
-    log::debug!("Декодирование адреса с версией: 0x{:02x}", decoded[0]);
-
-    // Возвращаем 20 байт Account ID (пропускаем первый байт версии)
-    Ok(decoded[1..21].to_vec())
+    // Используем правильную реализацию с XRP Base58 из crypto модуля
+    crate::crypto::decode_address_to_account_id(address)
 }
 
 /// Хэшировать данные для подписи с префиксом XRP

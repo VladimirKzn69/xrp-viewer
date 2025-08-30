@@ -18,7 +18,7 @@ use crypto::{
     is_valid_xrp_address, sign_blob,
 };
 use display::DisplayFormatter;
-use models::{PaymentFields, SubmitResult, TransactionCommonFields};
+use models::{PaymentFields, TransactionCommonFields};
 
 /// XRP кошелек: просмотр баланса и отправка транзакций
 #[derive(Debug, Parser)]
@@ -76,13 +76,12 @@ async fn handle_balance(address: String) -> Result<()> {
     log::debug!("Получен адрес для баланса: {}", address);
 
     // Проверяем валидность адреса
-    
+
     if !is_valid_xrp_address(&address) {
         eprintln!("❌ Ошибка: Неверный формат XRP адреса");
         eprintln!("💡 XRP адрес должен начинаться с 'r' и быть валидным Base58");
         return Err(anyhow::anyhow!("Неверный формат адреса"));
     }
-    
 
     // Создаём клиент API
     let api_client = XrpApi::new().context("Не удалось создать клиент API")?;
@@ -119,7 +118,7 @@ async fn handle_balance(address: String) -> Result<()> {
             if e.to_string().contains("actNotFound") || e.to_string().contains("Account not found")
             {
                 eprintln!("❌ Ошибка: Кошелек не найден или не активирован");
-                eprintln!("💡 Для активации кошелька необходимо минимум 10 XRP");
+                eprintln!("💡 Для активации кошелька необходимо минимум 1 XRP");
             } else {
                 eprintln!("❌ Ошибка: Не удается подключиться к API");
                 eprintln!("💡 Проверьте интернет-соединение");
@@ -207,7 +206,7 @@ async fn handle_send(from: String, to: String, amount: f64, key_file: String) ->
 
     // Проверка достаточности баланса
     let amount_drops = (amount * 1_000_000.0) as u64;
-    let min_reserve = 10_000_000; // 10 XRP минимальный резерв
+    let min_reserve = 10_000_00; // 1 XRP минимальный резерв
     let fee_drops = 12; // Базовая комиссия
 
     if balance_drops < amount_drops + fee_drops + min_reserve {
