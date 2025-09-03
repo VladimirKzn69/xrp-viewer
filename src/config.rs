@@ -1,5 +1,6 @@
 //! Модуль для работы с конфигурацией приложения, включая загрузку переменных окружения из .env файлов.
 
+use crate::network::Network;
 use anyhow::{Context, Result};
 use dotenv::from_filename; // Импортируем функцию из dotenv
 use std::env; // Для доступа к переменным окружения
@@ -55,6 +56,24 @@ pub fn get_private_key() -> Result<String> {
 
     log::debug!("Приватный ключ успешно загружен из переменной окружения");
     Ok(key)
+}
+
+// Добавьте поддержку сетей в Config
+impl Config {
+    pub fn load(network: Network) -> Result<Self> {
+        dotenv::dotenv().ok();
+
+        // Используем разные ключи для разных сетей
+        let env_var = network.private_key_env_var();
+        let private_key = env::var(env_var).with_context(|| {
+            format!(
+                "Приватный ключ не найден. Установите {} в .env файле",
+                env_var
+            )
+        })?;
+
+        Ok(Self { private_key })
+    }
 }
 
 #[cfg(test)]

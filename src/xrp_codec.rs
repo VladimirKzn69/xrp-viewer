@@ -57,9 +57,9 @@ impl FieldId {
     pub fn to_bytes(&self) -> Vec<u8> {
         let value = *self as u16;
         // ВАЖНО: в вашем enum значения хранятся как 0xTTFF (type, field)
-        let type_code = (value >> 8) & 0xFF;  // Старший байт = type
-        let field_code = value & 0xFF;         // Младший байт = field
-        
+        let type_code = (value >> 8) & 0xFF; // Старший байт = type
+        let field_code = value & 0xFF; // Младший байт = field
+
         // XRP Binary Codec правила:
         if type_code < 16 && field_code < 16 {
             // Однобайтовый формат: (type << 4) | field

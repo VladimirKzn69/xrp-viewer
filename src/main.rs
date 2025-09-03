@@ -8,6 +8,7 @@ mod config;
 mod crypto;
 mod display;
 mod models;
+mod network;
 mod xrp_codec; // 🆕 Новый модуль для XRP Binary Codec
 
 // Подключаем конкретные элементы из модулей
