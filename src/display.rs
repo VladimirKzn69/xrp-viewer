@@ -1,195 +1,210 @@
-//! Модуль для форматированного вывода информации
+use crate::models::{
+    AccountInfoResponse, AccountTxResponse, DisplayAccountInfo, DisplayTransaction,
+    FaucetResponse, SubmitResponse,
+};
+use crate::network::Network;
 
-use crate::models::{AccountData, SubmitResult, TransactionJson};
-use crate::network::Network;  // ДОБАВЛЕНО: импорт Network
-
-/// Структура для форматированного вывода
 pub struct DisplayFormatter;
 
 impl DisplayFormatter {
-    /// Отображение информации об аккаунте
-    /// СОХРАНЕНА ОРИГИНАЛЬНАЯ СИГНАТУРА, добавлен опциональный network
-    pub fn display_account_info(
-        address: &str, 
-        account_data: &AccountData,
-        transaction: Option<&DisplayTransaction>,
-        network: Option<Network>,  // ДОБАВЛЕНО: опциональный параметр для обратной совместимости
-    ) {
-        println!("\n📊 Информация об аккаунте");
-        
-        // ДОБАВЛЕНО: показываем сеть если передана и не mainnet
-        if let Some(net) = network {
-            if !net.is_production() {
-                println!("  🌐 Сеть: {}", net);
-            }
-        }
-        
-        println!("  Адрес: {}", address);
-        
-        // Баланс в XRP (drops -> XRP: делим на 1,000,000)
-        let balance_drops: u64 = account_data.balance.parse().unwrap_or(0);
-        let balance_xrp = balance_drops as f64 / 1_000_000.0;
-        println!("  Баланс: {:.6} XRP", balance_xrp);
-        
-        // Резерв
-        if let Some(reserve) = &account_data.reserve {
-            let reserve_drops: u64 = reserve.parse().unwrap_or(0);
-            let reserve_xrp = reserve_drops as f64 / 1_000_000.0;
-            println!("  Резерв: {:.6} XRP", reserve_xrp);
-        }
-        
-        // Sequence
-        println!("  Sequence: {}", account_data.sequence);
-        
-        // Отображение информации о последней транзакции если есть
-        if let Some(tx) = transaction {
-            println!("\n📄 Последняя транзакция:");
-            println!("  Хэш: {}", tx.hash);
-            println!("  Тип: {}", tx.transaction_type);
-            if let Some(amount) = &tx.amount {
-                let amount_drops: u64 = amount.parse().unwrap_or(0);
-                let amount_xrp = amount_drops as f64 / 1_000_000.0;
-                println!("  Сумма: {:.6} XRP", amount_xrp);
-            }
-            if let Some(fee) = &tx.fee {
-                let fee_drops: u64 = fee.parse().unwrap_or(0);
-                let fee_xrp = fee_drops as f64 / 1_000_000.0;
-                println!("  Комиссия: {:.6} XRP", fee_xrp);
-            }
-            if let Some(destination) = &tx.destination {
-                println!("  Получатель: {}", destination);
-            }
-        }
-        
-        // ДОБАВЛЕНО: ссылка на explorer если передана сеть
-        if let Some(net) = network {
-            let config = net.config();
-            println!("\n  🔗 Explorer: {}/accounts/{}", config.explorer_url, address);
+    /// Отображает информацию об аккаунте
+    pub fn account_info(response: &AccountInfoResponse, network: &Network) {
+        let account_data = &response.result.account_data;
+        let display_info = DisplayAccountInfo::from_account_data(
+            account_data.account.clone(),
+            account_data,
+        );
+
+        println!("\n╔══════════════════════════════════════════╗");
+        println!("║           ИНФОРМАЦИЯ О КОШЕЛЬКЕ          ║");
+        println!("╠══════════════════════════════════════════╣");
+        println!("║ 🌐 Сеть:     {:28} ║", network.to_string());
+        println!("║ 📍 Адрес:    {:28} ║", truncate_address(&display_info.address));
+        println!("║ 💰 Баланс:   {:>20.6} XRP    ║", display_info.balance_xrp);
+        println!("║ 🔢 Sequence: {:>28} ║", account_data.sequence);
+        println!("╚══════════════════════════════════════════╝");
+
+        // Предупреждение для тестовых сетей
+        if !network.config().is_production {
+            println!("\n⚠️  Это тестовая сеть! Транзакции не имеют реальной стоимости.");
         }
     }
-    
-    /// Отображение результата отправки транзакции
-    /// СОХРАНЕНА ОРИГИНАЛЬНАЯ СИГНАТУРА, добавлен опциональный network
-    pub fn submit_result(result: &SubmitResult, network: Option<Network>) {
-        println!("\n📤 Результат отправки транзакции");
-        
-        // ДОБАВЛЕНО: показываем сеть если передана и не mainnet
-        if let Some(net) = network {
-            if !net.is_production() {
-                println!("  🌐 Сеть: {}", net);
-            }
+
+    /// Отображает список транзакций
+    pub fn transactions(response: &AccountTxResponse) {
+        let transactions: Vec<DisplayTransaction> = response
+            .result
+            .transactions
+            .iter()
+            .filter_map(|tx_wrapper| DisplayTransaction::from_transaction(&tx_wrapper.tx))
+            .take(5)
+            .collect();
+
+        if transactions.is_empty() {
+            println!("\n📭 Транзакций не найдено");
+            return;
         }
-        
-        // Результат
-        let status = &result.engine_result;
-        if status == "tesSUCCESS" {
-            println!("  ✅ Статус: УСПЕШНО");
-        } else if status.starts_with("tes") {
-            println!("  ✅ Статус: {}", status);
-        } else if status.starts_with("ter") {
-            println!("  ⚠️  Статус: {} (требуется повтор)", status);
-        } else {
-            println!("  ❌ Статус: {}", status);
+
+        println!("\n📜 Последние транзакции:");
+        println!("┌────────────────────┬──────────┬────────────────┬────────────────┐");
+        println!("│       Дата         │   Сумма  │       От       │       Кому     │");
+        println!("├────────────────────┼──────────┼────────────────┼────────────────┤");
+
+        for tx in transactions {
+            println!(
+                "│ {:18} │ {:>8.2} │ {:14} │ {:14} │",
+                truncate_string(&tx.timestamp, 18),
+                tx.amount_xrp,
+                truncate_address(&tx.from),
+                truncate_address(&tx.to)
+            );
         }
-        
-        // Сообщение об ошибке/результате
-        if let Some(msg) = &result.engine_result_message {
-            println!("  Сообщение: {}", msg);
-        }
-        
-        // Детали транзакции если есть
-        if let Some(tx_json) = &result.tx_json {
-            if let Some(hash) = &tx_json.hash {
-                println!("  Хэш транзакции: {}", hash);
+        println!("└────────────────────┴──────────┴────────────────┴────────────────┘");
+    }
+
+    /// Отображает результат отправки транзакции
+    pub fn submit_result(response: &SubmitResponse, network: &Network) {
+        let result = &response.result;
+
+        if result.engine_result == "tesSUCCESS" {
+            println!("\n✅ Транзакция отправлена успешно!");
+            println!("   Сеть: {}", network);
+            println!("   Результат: {}", result.engine_result);
+            println!("   Сообщение: {}", result.engine_result_message);
+
+            // Извлекаем хэш транзакции из tx_json
+            if let Some(hash) = result.tx_json.get("hash").and_then(|h| h.as_str()) {
+                println!("   Хэш: {}", hash);
                 
-                // ДОБАВЛЕНО: ссылка на explorer если передана сеть
-                if let Some(net) = network {
-                    let config = net.config();
-                    println!("  🔗 Explorer: {}/{}", config.explorer_tx_url, hash);
-                }
+                // Показываем ссылку на эксплорер
+                let config = network.config();
+                println!("\n🔗 Посмотреть в эксплорере:");
+                println!("   {}", config.transaction_url(hash));
             }
+        } else {
+            println!("\n❌ Ошибка отправки транзакции");
+            println!("   Сеть: {}", network);
+            println!("   Код: {}", result.engine_result);
+            println!("   Сообщение: {}", result.engine_result_message);
             
-            // Комиссия
-            if let Some(fee) = &tx_json.fee {
-                let fee_drops: u64 = fee.parse().unwrap_or(0);
-                let fee_xrp = fee_drops as f64 / 1_000_000.0;
-                println!("  Комиссия: {:.6} XRP", fee_xrp);
-            }
-        }
-        
-        // ДОБАВЛЕНО: предупреждение для mainnet
-        if let Some(net) = network {
-            if net.is_production() && status == "tesSUCCESS" {
-                println!("\n  ✅ Транзакция отправлена в MAINNET (реальные XRP)!");
+            // Дополнительные подсказки по ошибкам
+            match result.engine_result.as_str() {
+                "tecUNFUNDED_PAYMENT" => {
+                    println!("\n💡 Недостаточно средств для отправки");
+                }
+                "tecNO_DST" => {
+                    println!("\n💡 Адрес получателя не активирован (требуется минимум 10 XRP)");
+                }
+                "tefBAD_AUTH" => {
+                    println!("\n💡 Неверная подпись транзакции");
+                }
+                _ => {}
             }
         }
     }
-    
-    // НОВАЯ ФУНКЦИЯ: отображение информации о сети
+
+    /// Отображает результат запроса к faucet
+    pub fn faucet_result(response: &FaucetResponse, network: &Network) {
+        println!("\n✅ Тестовые XRP успешно получены!");
+        println!("   Сеть: {}", network);
+        println!("   Адрес: {}", response.account);
+        println!("   Сумма: {} drops", response.amount);
+        
+        // Конвертируем drops в XRP
+        if let Ok(drops) = response.amount.parse::<u64>() {
+            let xrp = drops as f64 / 1_000_000.0;
+            println!("   В XRP: {:.6} XRP", xrp);
+        }
+
+        if let Some(balance) = &response.balance {
+            println!("   Новый баланс: {} drops", balance);
+        }
+
+        if let Some(tx_hash) = &response.tx_hash {
+            println!("   Транзакция: {}", tx_hash);
+            
+            // Показываем ссылку на эксплорер
+            let config = network.config();
+            println!("\n🔗 Посмотреть в эксплорере:");
+            println!("   {}", config.transaction_url(tx_hash));
+        }
+    }
+
+    /// Отображает информацию о сети
     pub fn network_info(network: &Network) {
         let config = network.config();
         
-        println!("\n🌐 Информация о сети");
-        println!("  Название: {}", config.name);
-        println!("  Тип: {}", 
-            if config.is_production { 
-                "Production (реальные XRP)" 
-            } else { 
-                "Testnet (тестовые XRP)" 
-            }
+        println!("\n╔══════════════════════════════════════════════════════╗");
+        println!("║                 ИНФОРМАЦИЯ О СЕТИ                    ║");
+        println!("╠══════════════════════════════════════════════════════╣");
+        println!("║ 🌐 Название: {:40} ║", config.name);
+        println!("║ 🔗 RPC URL:  {:40} ║", truncate_string(config.rpc_url, 40));
+        println!("║ 🔍 Explorer: {:40} ║", truncate_string(config.explorer_url, 40));
+        
+        if let Some(ws_url) = config.ws_url {
+            println!("║ 🔌 WebSocket: {:39} ║", truncate_string(ws_url, 39));
+        }
+        
+        if let Some(faucet_url) = config.faucet_url {
+            println!("║ 💧 Faucet:   {:40} ║", truncate_string(faucet_url, 40));
+        }
+        
+        println!("║ 🏷️  Тип:      {:40} ║", 
+            if config.is_production { "Production (Реальная сеть)" } else { "Testnet (Тестовая сеть)" }
         );
-        
-        println!("\n🔗 Endpoints");
-        println!("  RPC: {}", config.rpc_url);
-        if let Some(ws) = config.ws_url {
-            println!("  WebSocket: {}", ws);
+        println!("╚══════════════════════════════════════════════════════╝");
+
+        if !config.is_production {
+            println!("\n⚠️  Это тестовая сеть!");
+            println!("   • Транзакции не имеют реальной стоимости");
+            println!("   • Можно получить бесплатные XRP через faucet");
+            println!("   • Идеально для тестирования и разработки");
+        } else {
+            println!("\n⚡ Это основная сеть (mainnet)!");
+            println!("   • Все транзакции реальные");
+            println!("   • Используйте с осторожностью");
         }
-        
-        println!("\n📚 Ресурсы");
-        println!("  Explorer: {}", config.explorer_url);
-        if let Some(faucet) = config.faucet_url {
-            println!("  Faucet: доступен");
-            println!("  💡 Используйте команду 'faucet' для получения тестовых XRP");
-        }
+
+        // Показываем команды для текущей сети
+        println!("\n📝 Примеры команд для сети {}:", network);
+        println!("   cargo run -- -n {} balance <адрес>", network);
         
         if !config.is_production {
-            println!("\n⚠️  Внимание");
-            println!("  Это тестовая сеть - транзакции не имеют реальной стоимости!");
-        } else {
-            println!("\n🔴 ВАЖНО");
-            println!("  Это PRODUCTION сеть с РЕАЛЬНЫМИ XRP!");
-            println!("  Будьте осторожны при отправке транзакций!");
+            println!("   cargo run -- -n {} faucet <адрес>", network);
         }
+        
+        println!("   cargo run -- -n {} send --from <адрес> --to <адрес> --amount <сумма>", network);
     }
-    
-    // НОВАЯ ФУНКЦИЯ: отображение результата faucet
-    pub fn faucet_result(response: &crate::api::FaucetResponse) {
-        println!("\n✅ Получены тестовые XRP!");
-        println!("  Адрес: {}", response.account.address);
-        println!("  Сумма: {:.6} XRP", response.amount as f64 / 1_000_000.0);
-        
-        if let Some(balance) = response.balance {
-            println!("  Новый баланс: {:.6} XRP", balance as f64 / 1_000_000.0);
-        }
-        
-        if let Some(secret) = &response.account.secret {
-            println!("\n⚠️  СОХРАНИТЕ СЕКРЕТНЫЙ КЛЮЧ");
-            println!("  {}", secret);
-            println!("  Этот ключ не будет показан снова!");
-        }
-        
-        println!("\n💡 Следующие шаги:");
-        println!("  1. Проверьте баланс: xrp-viewer -n testnet balance {}", response.account.address);
-        println!("  2. Отправьте тестовую транзакцию");
+
+    /// Отображает ошибку
+    pub fn error(message: &str) {
+        println!("\n❌ Ошибка: {}", message);
+    }
+
+    /// Отображает предупреждение
+    pub fn warning(message: &str) {
+        println!("\n⚠️  Предупреждение: {}", message);
+    }
+
+    /// Отображает информационное сообщение
+    pub fn info(message: &str) {
+        println!("\nℹ️  {}", message);
     }
 }
 
-/// Структура для отображения транзакции
-/// СОХРАНЕНА из оригинала для совместимости
-pub struct DisplayTransaction {
-    pub hash: String,
-    pub transaction_type: String,
-    pub amount: Option<String>,
-    pub fee: Option<String>,
-    pub destination: Option<String>,
+// Вспомогательные функции
+fn truncate_address(address: &str) -> String {
+    if address.len() <= 14 {
+        address.to_string()
+    } else {
+        format!("{}...{}", &address[..6], &address[address.len() - 4..])
+    }
+}
+
+fn truncate_string(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max_len - 3])
+    }
 }

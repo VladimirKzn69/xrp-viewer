@@ -1,41 +1,42 @@
-// use reqwest::{Client, Error as ReqwestError};
-use crate::models::{
-    AccountInfoRequest,
-    AccountInfoResponse,
-    AccountTxRequest,
-    AccountTxResponse,
-    DisplayTransaction,
-    ServerStateRequest,
-    ServerStateResponse,
-    SubmitRequest,
-    SubmitResponse, // Добавлены новые модели
-};
 use anyhow::{Context, Result};
 use reqwest::Client;
-use serde_json::Value;
-use std::time::Duration;
+use serde_json::json;
+
+use crate::models::{
+    AccountInfoRequest, AccountInfoResponse, AccountTxRequest, AccountTxResponse,
+    FaucetRequest, FaucetResponse, ServerStateRequest, ServerStateResponse,
+    SubmitRequest, SubmitResponse,
+};
+use crate::network::Network;
 
 pub struct XrpApi {
     client: Client,
+    network: Network,
     base_url: String,
 }
 
 impl XrpApi {
-    pub fn new() -> Result<Self> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(15))
-            .user_agent("xrp-viewer/0.1.0")
-            .build()
-            .context("Не удалось создать HTTP-клиент")?;
-        Ok(XrpApi {
-            client,
-            base_url: "https://s1.ripple.com:51234".to_string(), // Исправлен пробел в конце URL
+    pub fn new(network: Network) -> Result<Self> {
+        let config = network.config();
+        Ok(Self {
+            client: Client::new(),
+            network,
+            base_url: config.rpc_url.to_string(),
         })
+    }
+
+    pub fn network(&self) -> &Network {
+        &self.network
     }
 
     pub async fn get_account_info(&self, address: &str) -> Result<AccountInfoResponse> {
         let request = AccountInfoRequest::new(address.to_string());
-        log::debug!("Отправка запроса account_info для адреса: {}", address);
+        log::debug!(
+            "Отправка запроса account_info для {} в сети {}",
+            address,
+            self.network
+        );
+
         let response = self
             .client
             .post(&self.base_url)
@@ -43,6 +44,7 @@ impl XrpApi {
             .send()
             .await
             .context("Не удалось отправить запрос к API")?;
+
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response
@@ -52,84 +54,78 @@ impl XrpApi {
             log::error!("API вернул ошибку {}: {}", status, error_text);
             anyhow::bail!("API вернул ошибку {}: {}", status, error_text);
         }
+
         let account_info: AccountInfoResponse = response
             .json()
             .await
             .context("Не удалось разобрать ответ API")?;
+
         if account_info.result.status != "success" {
-            log::error!("API вернул статус: {}", account_info.result.status);
-            anyhow::bail!("API вернул статус: {}", account_info.result.status);
+            log::error!(
+                "API вернул статус: {} для адреса {}",
+                account_info.result.status,
+                address
+            );
+            anyhow::bail!(
+                "API вернул статус: {} для адреса {}",
+                account_info.result.status,
+                address
+            );
         }
-        log::debug!("Получен ответ account_info для адреса: {}", address);
+
+        log::debug!("Получен ответ account_info для {}", address);
         Ok(account_info)
     }
 
-    pub async fn get_latest_transaction(
-        &self,
-        address: &str,
-    ) -> Result<Option<DisplayTransaction>> {
+    pub async fn get_account_transactions(&self, address: &str) -> Result<AccountTxResponse> {
         let request = AccountTxRequest::new(address.to_string());
-        log::debug!("Отправка запроса account_tx для адреса: {}", address);
+        log::debug!(
+            "Отправка запроса account_tx для {} в сети {}",
+            address,
+            self.network
+        );
+
         let response = self
             .client
             .post(&self.base_url)
             .json(&request)
             .send()
             .await
-            .context("Не удалось отправить запрос к API")?;
+            .context("Не удалось отправить запрос account_tx к API")?;
+
         if !response.status().is_success() {
             let status = response.status();
-            log::error!("API вернул ошибку: {}", status);
-            anyhow::bail!("API вернул ошибку: {}", status);
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Неизвестная ошибка".to_string());
+            log::error!("API account_tx вернул ошибку {}: {}", status, error_text);
+            anyhow::bail!("API account_tx вернул ошибку {}: {}", status, error_text);
         }
+
         let account_tx: AccountTxResponse = response
             .json()
             .await
-            .context("Не удалось разобрать ответ API")?;
+            .context("Не удалось разобрать ответ account_tx API")?;
+
         if account_tx.result.status != "success" {
-            log::error!("API вернул статус: {}", account_tx.result.status);
-            anyhow::bail!("API вернул статус: {}", account_tx.result.status);
+            log::error!(
+                "API account_tx вернул статус: {}",
+                account_tx.result.status
+            );
+            anyhow::bail!(
+                "API account_tx вернул статус: {}",
+                account_tx.result.status
+            );
         }
-        if account_tx.result.transactions.is_empty() {
-            log::debug!("У кошелька нет транзакций");
-            return Ok(None);
-        }
-        let first_tx_wrapper = &account_tx.result.transactions[0];
-        let transaction = &first_tx_wrapper.tx;
-        let display_tx = DisplayTransaction::from_transaction(transaction);
-        log::debug!("Получена последняя транзакция для адреса: {}", address);
-        Ok(display_tx)
-    }
 
-    #[allow(dead_code)]
-    pub async fn send_json_rpc_request<T>(&self, request_body: &Value) -> Result<T>
-    where
-        T: serde::de::DeserializeOwned,
-    {
-        let response = self
-            .client
-            .post(&self.base_url)
-            .json(request_body)
-            .send()
-            .await
-            .context("Не удалось отправить запрос к API")?;
-        if !response.status().is_success() {
-            let status = response.status();
-            log::error!("API вернул ошибку: {}", status);
-            anyhow::bail!("API вернул ошибку: {}", status);
-        }
-        let result: T = response
-            .json()
-            .await
-            .context("Не удалось разобрать ответ API")?;
-        Ok(result)
+        log::debug!("Получен ответ account_tx для {}", address);
+        Ok(account_tx)
     }
-
-    // --- Добавленные методы ---
 
     pub async fn get_server_state(&self) -> Result<ServerStateResponse> {
         let request = ServerStateRequest::new();
-        log::debug!("Отправка запроса server_state");
+        log::debug!("Отправка запроса server_state в сети {}", self.network);
 
         let response = self
             .client
@@ -141,8 +137,16 @@ impl XrpApi {
 
         if !response.status().is_success() {
             let status = response.status();
-            log::error!("API вернул ошибку server_state: {}", status);
-            anyhow::bail!("API вернул ошибку server_state: {}", status);
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Неизвестная ошибка".to_string());
+            log::error!(
+                "API server_state вернул ошибку {}: {}",
+                status,
+                error_text
+            );
+            anyhow::bail!("API server_state вернул ошибку {}: {}", status, error_text);
         }
 
         let state_response: ServerStateResponse = response
@@ -167,7 +171,7 @@ impl XrpApi {
 
     pub async fn submit_transaction(&self, tx_blob: &str) -> Result<SubmitResponse> {
         let request = SubmitRequest::new(tx_blob.to_string());
-        log::debug!("Отправка запроса submit для транзакции");
+        log::debug!("Отправка транзакции в сеть {}", self.network);
 
         let response = self
             .client
@@ -203,14 +207,75 @@ impl XrpApi {
             );
         }
 
-        log::debug!("Получен ответ submit");
+        log::debug!("Транзакция успешно отправлена");
         Ok(submit_response)
+    }
+
+    pub async fn request_from_faucet(&self, address: &str) -> Result<FaucetResponse> {
+        let config = self.network.config();
+        let faucet_url = config
+            .faucet_url
+            .ok_or_else(|| anyhow::anyhow!("Faucet недоступен для сети {}", config.name))?;
+
+        log::info!(
+            "Запрос тестовых XRP из faucet для адреса {} в сети {}",
+            address,
+            self.network
+        );
+
+        // Создаем запрос к faucet
+        let faucet_request = FaucetRequest {
+            destination: address.to_string(),
+            user_agent: "xrp-viewer".to_string(),
+        };
+
+        // Отправляем POST запрос к faucet API
+        let response = self
+            .client
+            .post(format!("{}/accounts", faucet_url))
+            .json(&faucet_request)
+            .send()
+            .await
+            .context("Не удалось отправить запрос к faucet")?;
+
+        // Проверяем статус ответа
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Неизвестная ошибка".to_string());
+            log::error!("Faucet вернул ошибку {}: {}", status, error_text);
+            
+            // Специальная обработка для частых ошибок
+            if error_text.contains("rate limit") {
+                anyhow::bail!("Превышен лимит запросов к faucet. Попробуйте позже.");
+            } else if error_text.contains("already funded") {
+                anyhow::bail!("Адрес уже получал тестовые XRP недавно.");
+            }
+            
+            anyhow::bail!("Faucet вернул ошибку {}: {}", status, error_text);
+        }
+
+        // Парсим ответ
+        let faucet_response: FaucetResponse = response
+            .json()
+            .await
+            .context("Не удалось разобрать ответ faucet")?;
+
+        log::info!(
+            "Успешно получено {} XRP для адреса {}",
+            faucet_response.amount,
+            address
+        );
+
+        Ok(faucet_response)
     }
 }
 
 impl Default for XrpApi {
     fn default() -> Self {
-        Self::new().expect("Не удалось создать API-клиент")
+        Self::new(Network::Mainnet).expect("Не удалось создать API-клиент")
     }
 }
 

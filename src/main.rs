@@ -1,6 +1,6 @@
-// main.rs - точка входа в программу с поддержкой отправки XRP
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
+use std::str::FromStr;
 
 // Подключаем наши модули
 mod api;
@@ -9,23 +9,38 @@ mod crypto;
 mod display;
 mod models;
 mod network;
-mod xrp_codec; // 🆕 Новый модуль для XRP Binary Codec
+mod xrp_codec;
 
 // Подключаем конкретные элементы из модулей
 use api::XrpApi;
-use config::{get_private_key, load_env_file};
+use config::Config;
 use crypto::{
     canonical_serialize, create_signed_tx_blob, decode_wif, derive_public_key,
     is_valid_xrp_address, sign_blob,
 };
 use display::DisplayFormatter;
 use models::{PaymentFields, TransactionCommonFields};
+use network::Network;
 
 /// XRP кошелек: просмотр баланса и отправка транзакций
 #[derive(Debug, Parser)]
-#[clap(name = "xrp-viewer", version = "0.2.0", about = "XRP кошелек")]
-enum Cli {
-    /// Просмотр баланса и последней транзакции кошелька
+#[clap(name = "xrp-viewer", version = "0.3.0", about = "XRP кошелек с поддержкой testnet")]
+struct Cli {
+    /// Выбор сети: mainnet, testnet, devnet
+    #[clap(long, short = 'n', default_value = "mainnet", global = true)]
+    network: String,
+
+    /// Вывод подробной информации
+    #[clap(long, short = 'v', global = true)]
+    verbose: bool,
+
+    #[clap(subcommand)]
+    command: Commands,
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    /// Просмотр баланса кошелька
     Balance {
         /// Публичный XRP-адрес (начинается с 'r')
         address: String,
@@ -45,6 +60,13 @@ enum Cli {
         #[clap(long, default_value = ".env")]
         key_file: String,
     },
+    /// Получить тестовые XRP из faucet (только testnet/devnet)
+    Faucet {
+        /// XRP адрес для получения тестовых токенов
+        address: String,
+    },
+    /// Показать информацию о текущей сети
+    Network,
 }
 
 #[tokio::main]
@@ -55,17 +77,32 @@ async fn main() -> Result<()> {
     // Парсинг аргументов командной строки
     let cli = Cli::parse();
 
-    match cli {
-        Cli::Balance { address } => {
-            handle_balance(address).await?;
+    // Парсинг сети
+    let network = Network::from_str(&cli.network)
+        .context("Неверное название сети. Доступны: mainnet, testnet, devnet")?;
+
+    // Включаем подробное логирование если указан флаг
+    if cli.verbose {
+        log::info!("Работаем в сети: {}", network);
+    }
+
+    match cli.command {
+        Commands::Balance { address } => {
+            handle_balance(address, network).await?;
         }
-        Cli::Send {
+        Commands::Send {
             from,
             to,
             amount,
             key_file,
         } => {
-            handle_send(from, to, amount, key_file).await?;
+            handle_send(from, to, amount, key_file, network).await?;
+        }
+        Commands::Faucet { address } => {
+            handle_faucet(address, network).await?;
+        }
+        Commands::Network => {
+            handle_network_info(network);
         }
     }
 
@@ -73,317 +110,234 @@ async fn main() -> Result<()> {
 }
 
 /// Обработка команды balance
-async fn handle_balance(address: String) -> Result<()> {
-    log::debug!("Получен адрес для баланса: {}", address);
+async fn handle_balance(address: String, network: Network) -> Result<()> {
+    log::debug!("Выполнение команды balance для {} в сети {}", address, network);
 
-    // Проверяем валидность адреса
-
+    // Валидация адреса
     if !is_valid_xrp_address(&address) {
-        eprintln!("❌ Ошибка: Неверный формат XRP адреса");
-        eprintln!("💡 XRP адрес должен начинаться с 'r' и быть валидным Base58");
-        return Err(anyhow::anyhow!("Неверный формат адреса"));
+        anyhow::bail!(
+            "Неверный формат XRP адреса: {}. Адрес должен начинаться с 'r'",
+            address
+        );
     }
 
-    // Создаём клиент API
-    let api_client = XrpApi::new().context("Не удалось создать клиент API")?;
+    // Создаем API клиент с указанной сетью
+    let api = XrpApi::new(network)?;
 
-    // Получаем информацию о кошельке
-    println!("🔄 Подключение к XRP Ledger...");
+    // Получаем информацию об аккаунте
+    println!("⏳ Получение информации о балансе в сети {}...", network);
+    let account_info = api
+        .get_account_info(&address)
+        .await
+        .context("Не удалось получить информацию об аккаунте")?;
 
-    match api_client.get_account_info(&address).await {
-        Ok(account_info) => {
-            log::info!("Получена информация о кошельке");
+    // Получаем последние транзакции
+    let transactions = api
+        .get_account_transactions(&address)
+        .await
+        .context("Не удалось получить транзакции")?;
 
-            // Получаем последнюю транзакцию
-            let transaction = api_client
-                .get_latest_transaction(&address)
-                .await
-                .ok()
-                .flatten();
+    // Форматированный вывод
+    DisplayFormatter::account_info(&account_info, &network);
+    DisplayFormatter::transactions(&transactions);
 
-            // Создаём форматировщик вывода
-            let formatter = DisplayFormatter::new();
-
-            // Выводим информацию
-            formatter.display_account_info(
-                &address,
-                &account_info.result.account_data,
-                transaction.as_ref(),
-            );
-
-            Ok(())
-        }
-        Err(e) => {
-            log::error!("Ошибка API: {}", e);
-
-            if e.to_string().contains("actNotFound") || e.to_string().contains("Account not found")
-            {
-                eprintln!("❌ Ошибка: Кошелек не найден или не активирован");
-                eprintln!("💡 Для активации кошелька необходимо минимум 1 XRP");
-            } else {
-                eprintln!("❌ Ошибка: Не удается подключиться к API");
-                eprintln!("💡 Проверьте интернет-соединение");
-            }
-
-            Err(anyhow::anyhow!("Ошибка получения информации о кошельке"))
-        }
-    }
+    Ok(())
 }
 
 /// Обработка команды send
-async fn handle_send(from: String, to: String, amount: f64, key_file: String) -> Result<()> {
-    log::info!("🚀 Начинаем процесс отправки XRP");
+async fn handle_send(
+    from: String,
+    to: String,
+    amount: f64,
+    key_file: String,
+    network: Network,
+) -> Result<()> {
     log::debug!(
-        "From: {}, To: {}, Amount: {}, Key File: {}",
+        "Выполнение команды send: {} -> {} ({} XRP) в сети {}",
         from,
         to,
         amount,
-        key_file
+        network
     );
 
-    // 1. Валидация адресов
-    println!("🔍 Проверка адресов...");
-
+    // Валидация адресов
     if !is_valid_xrp_address(&from) {
-        eprintln!("❌ Ошибка: Неверный адрес отправителя");
-        return Err(anyhow::anyhow!("Неверный адрес отправителя"));
+        anyhow::bail!("Неверный адрес отправителя: {}", from);
     }
-
     if !is_valid_xrp_address(&to) {
-        eprintln!("❌ Ошибка: Неверный адрес получателя");
-        return Err(anyhow::anyhow!("Неверный адрес получателя"));
+        anyhow::bail!("Неверный адрес получателя: {}", to);
     }
 
+    // Валидация суммы
     if amount <= 0.0 {
-        eprintln!("❌ Ошибка: Сумма должна быть больше 0");
-        return Err(anyhow::anyhow!("Неверная сумма"));
+        anyhow::bail!("Сумма должна быть больше нуля");
+    }
+    if amount < 0.000001 {
+        anyhow::bail!("Минимальная сумма отправки: 0.000001 XRP");
     }
 
-    println!("✅ Адреса валидны");
+    // Предупреждение для mainnet
+    if matches!(network, Network::Mainnet) && amount > 100.0 {
+        println!("⚠️  ВНИМАНИЕ: Вы отправляете большую сумму ({} XRP) в MAINNET!", amount);
+        println!("Это реальные деньги! Продолжить? (y/N): ");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("❌ Отменено пользователем");
+            return Ok(());
+        }
+    }
 
-    // 2. Загрузка приватного ключа
-    println!("🔑 Загрузка приватного ключа...");
+    // Загружаем конфигурацию и приватный ключ
+    let config = Config::load(&key_file, network)?;
+    let private_key = config
+        .private_key
+        .ok_or_else(|| anyhow::anyhow!("Приватный ключ не найден в {}", key_file))?;
 
-    load_env_file(&key_file)
-        .with_context(|| format!("Не удалось загрузить файл '{}'", key_file))?;
+    // Декодируем приватный ключ
+    let private_key_bytes = decode_wif(&private_key)
+        .context("Не удалось декодировать приватный ключ")?;
 
-    let private_key_wif =
-        get_private_key().context("Не удалось получить приватный ключ из конфигурации")?;
+    // Получаем публичный ключ
+    let public_key = derive_public_key(&private_key_bytes)
+        .context("Не удалось получить публичный ключ")?;
 
-    println!("✅ Ключ загружен");
+    // Создаем API клиент
+    let api = XrpApi::new(network)?;
 
-    // 3. Декодирование ключа
-    let private_key_bytes =
-        decode_wif(&private_key_wif).context("Не удалось декодировать приватный ключ (WIF)")?;
-
-    let public_key_bytes =
-        derive_public_key(&private_key_bytes).context("Не удалось получить публичный ключ")?;
-
-    log::debug!("Публичный ключ: {} байт", public_key_bytes.len());
-
-    // 4. Создание клиента API
-    let api = XrpApi::new().context("Не удалось создать клиент API")?;
-
-    // 5. Получение информации об аккаунте
-    println!("📊 Получение информации о балансе...");
-
+    // Получаем информацию об аккаунте отправителя
+    println!("⏳ Получение информации об аккаунте в сети {}...", network);
     let account_info = api
         .get_account_info(&from)
         .await
         .context("Не удалось получить информацию об аккаунте отправителя")?;
 
-    let balance_drops = account_info
-        .result
-        .account_data
-        .balance
-        .parse::<u64>()
-        .unwrap_or(0);
-    let balance_xrp = balance_drops as f64 / 1_000_000.0;
-
-    let sequence = account_info.result.account_data.sequence.unwrap_or(0);
-
-    println!("💰 Текущий баланс: {:.6} XRP", balance_xrp);
-    println!("📝 Sequence: {}", sequence);
-
-    // Проверка достаточности баланса
-    let amount_drops = (amount * 1_000_000.0) as u64;
-    let min_reserve = 10_000_00; // 1 XRP минимальный резерв
-    let fee_drops = 12; // Базовая комиссия
-
-    if balance_drops < amount_drops + fee_drops + min_reserve {
-        eprintln!("❌ Недостаточно средств!");
-        eprintln!("   Баланс: {:.6} XRP", balance_xrp);
-        eprintln!(
-            "   Необходимо: {:.6} XRP (включая резерв и комиссию)",
-            (amount_drops + fee_drops + min_reserve) as f64 / 1_000_000.0
+    // Проверяем баланс
+    let balance = account_info.result.account_data.balance_xrp();
+    if balance < amount + 10.0 {
+        anyhow::bail!(
+            "Недостаточно средств. Баланс: {} XRP, требуется: {} XRP (+ 10 XRP резерв)",
+            balance,
+            amount
         );
-        return Err(anyhow::anyhow!("Недостаточно средств"));
     }
 
-    // 6. Получение состояния сервера для LastLedgerSequence
-    println!("🌐 Получение состояния сети...");
-
+    // Получаем информацию о состоянии сервера
     let server_state = api
         .get_server_state()
         .await
         .context("Не удалось получить состояние сервера")?;
 
-    let current_ledger = server_state
-        .result
-        .state
-        .validated_ledger
-        .ledger_index
-        .unwrap_or(0);
-    let last_ledger_sequence = current_ledger + 10; // Транзакция действительна 10 ledger'ов
+    // Подготавливаем транзакцию
+    let sequence = account_info.result.account_data.sequence;
+    let ledger_sequence = server_state.result.state.validated_ledger.seq;
+    let last_ledger_sequence = ledger_sequence + 10;
 
-    // Получаем рекомендуемую комиссию
-    let default_fee = "0.000012".to_string(); // Создаём долгоживущую переменную
-    let base_fee_str = server_state
-        .result
-        .state
-        .validated_ledger
-        .base_fee_xrp
-        .as_ref()
-        .unwrap_or(&default_fee); // Ссылаемся на неё
-    let recommended_fee = (base_fee_str.parse::<f64>().unwrap_or(0.000012) * 1_000_000.0) as u64;
-    let fee_drops_final = recommended_fee.max(12); // Минимум 12 drops
+    let common_fields = TransactionCommonFields {
+        transaction_type: "Payment".to_string(),
+        account: from.clone(),
+        fee: "12".to_string(),
+        sequence,
+        last_ledger_sequence: Some(last_ledger_sequence),
+    };
 
-    println!("✅ Текущий ledger: {}", current_ledger);
-    println!(
-        "💸 Рекомендуемая комиссия: {} drops ({:.6} XRP)",
-        fee_drops_final,
-        fee_drops_final as f64 / 1_000_000.0
-    );
+    let payment_fields = PaymentFields {
+        amount: ((amount * 1_000_000.0) as u64).to_string(),
+        destination: to.clone(),
+    };
 
-    // 7. Подтверждение от пользователя
+    // Создаем JSON объект транзакции
+    let mut tx_json = serde_json::to_value(&common_fields)?;
+    let payment_json = serde_json::to_value(&payment_fields)?;
+    if let (Some(tx_obj), Some(payment_obj)) = (tx_json.as_object_mut(), payment_json.as_object()) {
+        tx_obj.extend(payment_obj.clone());
+    }
+
+    // Каноническая сериализация
+    let canonical_json = canonical_serialize(&tx_json)
+        .context("Не удалось выполнить каноническую сериализацию")?;
+
+    // Подписываем транзакцию
+    let signature = sign_blob(&canonical_json, &private_key_bytes)
+        .context("Не удалось подписать транзакцию")?;
+
+    // Создаем подписанную транзакцию
+    let tx_blob = create_signed_tx_blob(&tx_json, &public_key, &signature)
+        .context("Не удалось создать tx_blob")?;
+
+    // Показываем детали транзакции
     println!("\n📋 Детали транзакции:");
-    println!("┌─────────────────────────────────────");
-    println!("│ От: {}", from);
-    println!("│ Кому: {}", to);
-    println!("│ Сумма: {:.6} XRP", amount);
-    println!(
-        "│ Комиссия: {:.6} XRP",
-        fee_drops_final as f64 / 1_000_000.0
-    );
-    println!(
-        "│ Итого будет списано: {:.6} XRP",
-        (amount_drops + fee_drops_final) as f64 / 1_000_000.0
-    );
-    println!("└─────────────────────────────────────");
+    println!("  Сеть: {}", network);
+    println!("  От: {}", from);
+    println!("  Кому: {}", to);
+    println!("  Сумма: {} XRP", amount);
+    println!("  Комиссия: 0.000012 XRP");
+    println!("  Sequence: {}", sequence);
 
+    // Запрашиваем подтверждение
     println!("\n❓ Отправить транзакцию? (y/N): ");
-
-    use std::io::{self, Write};
-    io::stdout().flush()?;
-
     let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
+    std::io::stdin().read_line(&mut input)?;
 
     if !input.trim().eq_ignore_ascii_case("y") {
         println!("❌ Отменено пользователем");
         return Ok(());
     }
 
-    // 8. Создание и подписание транзакции
-    println!("🔐 Подписание транзакции...");
+    // Отправляем транзакцию
+    println!("\n⏳ Отправка транзакции в сеть {}...", network);
+    let submit_result = api
+        .submit_transaction(&tx_blob)
+        .await
+        .context("Не удалось отправить транзакцию")?;
 
-    let common_fields = TransactionCommonFields {
-        transaction_type: "Payment".to_string(),
-        account: from.clone(),
-        fee: fee_drops_final.to_string(),
-        sequence,
-        last_ledger_sequence: Some(last_ledger_sequence),
-    };
-
-    let payment_fields = PaymentFields {
-        amount: amount_drops.to_string(),
-        destination: to.clone(),
-    };
-
-    // Сериализация для подписи
-    let transaction_blob = canonical_serialize(&common_fields, &payment_fields)
-        .context("Не удалось сериализовать транзакцию")?;
-
-    log::debug!("Транзакция сериализована: {} байт", transaction_blob.len());
-
-    // Подписание
-    let signature_der = sign_blob(&private_key_bytes, &transaction_blob)
-        .context("Не удалось подписать транзакцию")?;
-
-    log::debug!("Подпись создана: {} байт", signature_der.len());
-
-    // Создание финального blob
-    let tx_blob = create_signed_tx_blob(
-        transaction_blob,
-        signature_der,
-        public_key_bytes,
-        &common_fields,
-        &payment_fields,
-    )
-    .context("Не удалось создать финальный tx_blob")?;
-
-    println!("✅ Транзакция подписана");
-    log::debug!("TX Blob длина: {} символов", tx_blob.len());
-
-    // 9. Отправка транзакции
-    println!("📡 Отправка транзакции в сеть...");
-
-    match api.submit_transaction(&tx_blob).await {
-        Ok(submit_result) => {
-            let engine_result = &submit_result.result.engine_result;
-            let engine_code = submit_result.result.engine_result_code;
-            let engine_message = &submit_result.result.engine_result_message;
-
-            println!("\n📬 Результат отправки:");
-            println!("   Статус: {} (код: {})", engine_result, engine_code);
-            println!("   Сообщение: {}", engine_message);
-
-            if engine_code == 0 || engine_result.starts_with("tes") {
-                println!("\n✅ Транзакция успешно отправлена!");
-
-                if let Some(hash) = submit_result.result.get_transaction_hash() {
-                    println!("🔗 Хэш транзакции: {}", hash);
-                    println!("\n💡 Отслеживать транзакцию можно на:");
-                    println!("   https://livenet.xrpl.org/transactions/{}", hash);
-                }
-            } else if engine_result.starts_with("tec") {
-                println!("\n⚠️ Транзакция обработана, но с ошибкой!");
-                println!("   Проверьте детали ошибки выше");
-            } else {
-                println!("\n❌ Транзакция отклонена!");
-
-                // Подробные подсказки по частым ошибкам
-                match engine_result.as_str() {
-                    "temMALFORMED" => {
-                        println!("   💡 Неверный формат транзакции");
-                    }
-                    "tefBAD_AUTH" => {
-                        println!("   💡 Неверная подпись или ключ не соответствует адресу");
-                    }
-                    "tecUNFUNDED_PAYMENT" => {
-                        println!("   💡 Недостаточно средств для отправки");
-                    }
-                    "tecNO_DST" => {
-                        println!("   💡 Адрес получателя не существует или не активирован");
-                    }
-                    _ => {
-                        println!("   💡 См. документацию XRP для кода: {}", engine_result);
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("\n❌ Ошибка при отправке транзакции: {}", e);
-
-            if e.to_string().contains("timeout") {
-                eprintln!("   💡 Превышено время ожидания. Проверьте интернет-соединение");
-            } else {
-                eprintln!("   💡 Проверьте правильность данных и повторите попытку");
-            }
-
-            return Err(e);
-        }
-    }
+    // Выводим результат
+    DisplayFormatter::submit_result(&submit_result, &network);
 
     Ok(())
+}
+
+/// Обработка команды faucet
+async fn handle_faucet(address: String, network: Network) -> Result<()> {
+    log::debug!("Выполнение команды faucet для {} в сети {}", address, network);
+
+    // Проверяем, что это не mainnet
+    if matches!(network, Network::Mainnet) {
+        anyhow::bail!("Faucet доступен только для testnet и devnet");
+    }
+
+    // Валидация адреса
+    if !is_valid_xrp_address(&address) {
+        anyhow::bail!(
+            "Неверный формат XRP адреса: {}. Адрес должен начинаться с 'r'",
+            address
+        );
+    }
+
+    // Создаем API клиент
+    let api = XrpApi::new(network)?;
+
+    println!("⏳ Запрос тестовых XRP из faucet сети {}...", network);
+    println!("   Это может занять до 30 секунд...");
+
+    // Запрашиваем XRP из faucet
+    let faucet_result = api
+        .request_from_faucet(&address)
+        .await
+        .context("Не удалось получить XRP из faucet")?;
+
+    // Выводим результат
+    DisplayFormatter::faucet_result(&faucet_result, &network);
+
+    // Дополнительная информация
+    println!("\n💡 Подсказка:");
+    println!("   Проверьте баланс через несколько секунд:");
+    println!("   cargo run -- -n {} balance {}", network, address);
+
+    Ok(())
+}
+
+/// Обработка команды network
+fn handle_network_info(network: Network) {
+    DisplayFormatter::network_info(&network);
 }

@@ -1,139 +1,171 @@
-//! Модуль для работы с конфигурацией приложения, включая загрузку переменных окружения из .env файлов.
+use anyhow::{Context, Result};
+use std::env;
+use std::path::Path;
 
 use crate::network::Network;
-use anyhow::{Context, Result};
-use dotenv::from_filename; // Импортируем функцию из dotenv
-use std::env; // Для доступа к переменным окружения
 
-/// Загружает переменные окружения из указанного .env файла.
-///
-/// # Аргументы
-/// * `file_path` - Путь к .env файлу.
-///
-/// # Ошибки
-/// Возвращает ошибку, если файл не найден или не может быть прочитан.
-pub fn load_env_file(file_path: &str) -> Result<()> {
-    // Пытаемся загрузить переменные из файла.
-    // from_filename возвращает Result<(), dotenv::Error>
-    from_filename(file_path)
-        .with_context(|| format!("Не удалось загрузить .env файл: {}", file_path))?;
-    log::debug!("Переменные окружения загружены из файла: {}", file_path);
+/// Структура конфигурации приложения
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub network: Network,
+    pub private_key: Option<String>,
+}
+
+impl Config {
+    /// Загружает конфигурацию из файла .env
+    pub fn load(env_file: &str, network: Network) -> Result<Self> {
+        // Загружаем переменные окружения из файла
+        load_env_file(env_file)?;
+
+        // Получаем приватный ключ для указанной сети
+        let private_key = get_private_key(&network)?;
+
+        Ok(Self {
+            network,
+            private_key,
+        })
+    }
+
+    /// Создает пустую конфигурацию
+    pub fn empty(network: Network) -> Self {
+        Self {
+            network,
+            private_key: None,
+        }
+    }
+}
+
+/// Загружает переменные окружения из .env файла
+pub fn load_env_file(path: &str) -> Result<()> {
+    let env_path = Path::new(path);
+    
+    if !env_path.exists() {
+        log::warn!("Файл {} не найден", path);
+        return Ok(());
+    }
+
+    dotenv::from_path(env_path)
+        .with_context(|| format!("Не удалось загрузить файл {}", path))?;
+
+    log::debug!("Конфигурация загружена из {}", path);
     Ok(())
 }
 
-/// Получает значение переменной окружения.
-///
-/// # Аргументы
-/// * `key` - Имя переменной окружения.
-///
-/// # Возвращает
-/// `Some(value)`, если переменная существует, `None` если не существует.
-pub fn get_env_var(key: &str) -> Option<String> {
-    // env::var возвращает Result<String, VarError>
-    match env::var(key) {
-        Ok(value) => {
-            log::debug!("Получена переменная окружения {}: ***", key); // Не логируем значение ключа!
-            Some(value)
+/// Получает приватный ключ для указанной сети
+pub fn get_private_key(network: &Network) -> Result<Option<String>> {
+    // Определяем имя переменной окружения в зависимости от сети
+    let env_var = network.private_key_env_var();
+    
+    // Пытаемся получить ключ для конкретной сети
+    match env::var(&env_var) {
+        Ok(key) if !key.is_empty() => {
+            log::debug!("Приватный ключ найден в {}", env_var);
+            Ok(Some(key))
         }
-        Err(e) => {
-            log::debug!("Переменная окружения {} не найдена: {}", key, e);
-            None
+        _ => {
+            // Если ключ для конкретной сети не найден, пробуем общий ключ
+            match env::var("XRP_PRIVATE_KEY") {
+                Ok(key) if !key.is_empty() => {
+                    log::debug!("Используется общий приватный ключ XRP_PRIVATE_KEY");
+                    Ok(Some(key))
+                }
+                _ => {
+                    log::warn!("Приватный ключ не найден ни в {}, ни в XRP_PRIVATE_KEY", env_var);
+                    Ok(None)
+                }
+            }
         }
     }
 }
 
-/// Получает приватный ключ из переменной окружения `PRIVATE_KEY`.
-///
-/// # Возвращает
-/// `Ok(String)` с приватным ключом, если он найден.
-/// `Err(...)` если переменная не найдена или пуста.
-pub fn get_private_key() -> Result<String> {
-    let key = get_env_var("PRIVATE_KEY").context("Переменная окружения PRIVATE_KEY не найдена")?;
-
-    if key.is_empty() {
-        anyhow::bail!("Переменная окружения PRIVATE_KEY пуста");
-    }
-
-    log::debug!("Приватный ключ успешно загружен из переменной окружения");
-    Ok(key)
+/// Получает значение из переменной окружения или возвращает значение по умолчанию
+pub fn get_env_or_default(key: &str, default: &str) -> String {
+    env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
-// Добавьте поддержку сетей в Config
-impl Config {
-    pub fn load(network: Network) -> Result<Self> {
-        dotenv::dotenv().ok();
+/// Проверяет наличие необходимых переменных окружения
+pub fn validate_env() -> Result<()> {
+    // Получаем текущую сеть
+    let network_str = get_env_or_default("DEFAULT_NETWORK", "mainnet");
+    let network = network_str.parse::<Network>()
+        .context("Неверное значение DEFAULT_NETWORK")?;
 
-        // Используем разные ключи для разных сетей
-        let env_var = network.private_key_env_var();
-        let private_key = env::var(env_var).with_context(|| {
-            format!(
-                "Приватный ключ не найден. Установите {} в .env файле",
-                env_var
-            )
-        })?;
-
-        Ok(Self { private_key })
+    // Проверяем наличие приватного ключа для текущей сети
+    let private_key = get_private_key(&network)?;
+    if private_key.is_none() {
+        log::warn!(
+            "Приватный ключ не установлен. Команда 'send' будет недоступна.\n\
+            Установите {} или XRP_PRIVATE_KEY в файле .env",
+            network.private_key_env_var()
+        );
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{env, io::Write};
-    use tempfile::NamedTempFile; // Для создания временных файлов в тестах
+    use std::env;
+    use tempfile::NamedTempFile;
+    use std::io::Write;
 
     #[test]
-    fn test_load_env_file_and_get_private_key() -> Result<()> {
-        // Создаем временный файл с содержимым
-        let mut tmp_file = NamedTempFile::new()?;
-        writeln!(tmp_file, "PRIVATE_KEY=s3cr3t_k3y_v4lu3")?;
+    fn test_load_env_file() {
+        // Создаем временный файл
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "TEST_VAR=test_value").unwrap();
 
-        // Получаем путь к временному файлу
-        let tmp_path = tmp_file.path().to_str().unwrap();
+        // Загружаем файл
+        load_env_file(file.path().to_str().unwrap()).unwrap();
 
-        // Загружаем переменные из временного файла
-        load_env_file(tmp_path)?;
+        // Проверяем, что переменная загружена
+        assert_eq!(env::var("TEST_VAR").unwrap(), "test_value");
 
-        // Получаем ключ
-        let key = get_private_key()?;
-
-        // Проверяем
-        assert_eq!(key, "s3cr3t_k3y_v4lu3");
-
-        Ok(())
+        // Очищаем
+        env::remove_var("TEST_VAR");
     }
 
     #[test]
-    fn test_get_private_key_not_found() {
-        // Убеждаемся, что переменная не установлена
-        env::remove_var("PRIVATE_KEY");
+    fn test_get_private_key_with_network_specific() {
+        // Устанавливаем переменную для testnet
+        env::set_var("XRP_PRIVATE_KEY_TESTNET", "testnet_key");
 
-        // Попытка получить ключ должна завершиться ошибкой
-        let result = get_private_key();
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("PRIVATE_KEY не найдена"));
+        let key = get_private_key(&Network::Testnet).unwrap();
+        assert_eq!(key, Some("testnet_key".to_string()));
+
+        // Очищаем
+        env::remove_var("XRP_PRIVATE_KEY_TESTNET");
     }
 
     #[test]
-    fn test_get_private_key_empty() -> Result<()> {
-        // Создаем временный файл с пустым ключом
-        let mut tmp_file = NamedTempFile::new()?;
-        writeln!(tmp_file, "PRIVATE_KEY=")?;
+    fn test_get_private_key_fallback_to_general() {
+        // Устанавливаем только общий ключ
+        env::set_var("XRP_PRIVATE_KEY", "general_key");
 
-        let tmp_path = tmp_file.path().to_str().unwrap();
-        load_env_file(tmp_path)?;
+        let key = get_private_key(&Network::Devnet).unwrap();
+        assert_eq!(key, Some("general_key".to_string()));
 
-        // Попытка получить ключ должна завершиться ошибкой
-        let result = get_private_key();
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("PRIVATE_KEY пуста"));
+        // Очищаем
+        env::remove_var("XRP_PRIVATE_KEY");
+    }
 
-        Ok(())
+    #[test]
+    fn test_config_load() {
+        // Создаем временный .env файл
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "XRP_PRIVATE_KEY_TESTNET=test_private_key").unwrap();
+
+        // Загружаем конфигурацию
+        let config = Config::load(
+            file.path().to_str().unwrap(),
+            Network::Testnet
+        ).unwrap();
+
+        assert_eq!(config.private_key, Some("test_private_key".to_string()));
+        assert!(matches!(config.network, Network::Testnet));
+
+        // Очищаем
+        env::remove_var("XRP_PRIVATE_KEY_TESTNET");
     }
 }

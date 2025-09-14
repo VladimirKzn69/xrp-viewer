@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-// use std::collections::BTreeMap; // Добавлено для Transaction
 
 // --- Структуры для account_info ---
 #[derive(Serialize, Debug)]
@@ -26,34 +25,42 @@ impl AccountInfoRequest {
     }
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug)]
 pub struct AccountInfoResponse {
     pub result: AccountInfoResult,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug)]
 pub struct AccountInfoResult {
     pub account_data: AccountData,
     pub status: String,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug)]
 pub struct AccountData {
+    #[serde(rename = "Account")]
+    pub account: String,
     #[serde(rename = "Balance")]
     pub balance: String,
-    // Добавляем sequence
+    #[serde(rename = "Flags")]
+    pub flags: u32,
+    #[serde(rename = "LedgerEntryType")]
+    pub ledger_entry_type: String,
+    #[serde(rename = "OwnerCount")]
+    pub owner_count: u32,
+    #[serde(rename = "PreviousTxnID")]
+    pub previous_txn_id: String,
+    #[serde(rename = "PreviousTxnLgrSeq")]
+    pub previous_txn_lgr_seq: u32,
     #[serde(rename = "Sequence")]
-    pub sequence: Option<u32>, // Может отсутствовать у неактивированных аккаунтов
-                               // #[serde(rename = "Account")]
-                               // pub account: String,
+    pub sequence: u32,
+    #[serde(rename = "index")]
+    pub index: String,
 }
 
 impl AccountData {
     pub fn balance_xrp(&self) -> f64 {
-        match self.balance.parse::<f64>() {
-            Ok(balance_drops) => balance_drops / 1_000_000.0,
-            Err(_) => 0.0,
-        }
+        self.balance.parse::<f64>().unwrap_or(0.0) / 1_000_000.0
     }
 }
 
@@ -67,8 +74,9 @@ pub struct AccountTxRequest {
 #[derive(Serialize, Debug)]
 pub struct AccountTxParams {
     pub account: String,
+    pub ledger_index_min: i32,
+    pub ledger_index_max: i32,
     pub limit: u32,
-    pub descending: bool,
 }
 
 impl AccountTxRequest {
@@ -77,75 +85,89 @@ impl AccountTxRequest {
             method: "account_tx".to_string(),
             params: vec![AccountTxParams {
                 account,
-                limit: 1,
-                descending: true,
+                ledger_index_min: -1,
+                ledger_index_max: -1,
+                limit: 5,
             }],
         }
     }
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug)]
 pub struct AccountTxResponse {
     pub result: AccountTxResult,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug)]
 pub struct AccountTxResult {
+    pub account: String,
     pub transactions: Vec<TransactionWrapper>,
     pub status: String,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug)]
 pub struct TransactionWrapper {
     pub tx: Transaction,
+    pub meta: TransactionMeta,
+    pub validated: bool,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug)]
 pub struct Transaction {
-    pub hash: String,
-    #[serde(rename = "Amount")]
-    pub amount: Option<String>,
-    pub date: Option<u64>,
     #[serde(rename = "Account")]
     pub account: String,
-    #[serde(rename = "Destination")]
+    #[serde(rename = "Amount", skip_serializing_if = "Option::is_none")]
+    pub amount: Option<String>,
+    #[serde(rename = "Destination", skip_serializing_if = "Option::is_none")]
     pub destination: Option<String>,
+    #[serde(rename = "Fee")]
+    pub fee: String,
     #[serde(rename = "TransactionType")]
     pub transaction_type: String,
+    #[serde(rename = "hash")]
+    pub hash: String,
+    #[serde(rename = "date", skip_serializing_if = "Option::is_none")]
+    pub date: Option<u64>,
 }
 
 impl Transaction {
     pub fn amount_xrp(&self) -> f64 {
-        match &self.amount {
-            Some(amount_str) => match amount_str.parse::<f64>() {
-                Ok(amount_drops) => amount_drops / 1_000_000.0,
-                Err(_) => 0.0,
-            },
-            None => 0.0,
-        }
+        self.amount
+            .as_ref()
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(0.0)
+            / 1_000_000.0
     }
+
     pub fn formatted_date(&self) -> String {
         match self.date {
-            Some(timestamp) => {
-                let ripple_epoch = 946_684_800;
-                let unix_timestamp = ripple_epoch + timestamp;
-                format_timestamp(unix_timestamp)
-            }
-            None => "Нет данных".to_string(),
+            Some(d) => format_xrp_timestamp(d),
+            None => "Неизвестно".to_string(),
         }
     }
 }
 
-fn format_timestamp(timestamp: u64) -> String {
-    // use std::time::{Duration, SystemTime, UNIX_EPOCH};
-    use std::time::{Duration, UNIX_EPOCH};
-    let dt = UNIX_EPOCH + Duration::from_secs(timestamp);
-    match dt.duration_since(UNIX_EPOCH) {
-        Ok(_) => {
-            let secs = timestamp;
-            let days = secs / 86400;
-            let hours = (secs % 86400) / 3600;
-            let minutes = (secs % 3600) / 60;
+#[derive(Deserialize, Debug)]
+pub struct TransactionMeta {
+    #[serde(rename = "TransactionResult")]
+    pub transaction_result: String,
+}
+
+fn format_xrp_timestamp(xrp_timestamp: u64) -> String {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    const XRP_EPOCH_OFFSET: u64 = 946684800;
+
+    let unix_timestamp = xrp_timestamp + XRP_EPOCH_OFFSET;
+    let datetime = UNIX_EPOCH + Duration::from_secs(unix_timestamp);
+
+    match datetime.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(duration) => {
+            let total_seconds = duration.as_secs();
+            let days = total_seconds / 86400;
+            let hours = (total_seconds % 86400) / 3600;
+            let minutes = (total_seconds % 3600) / 60;
+
             format!(
                 "20{}-{:02}-{:02} {:02}:{:02} UTC",
                 24 + (days / 365),
@@ -182,6 +204,7 @@ pub struct DisplayTransaction {
     pub timestamp: String,
     pub from: String,
     pub to: String,
+    pub network: Option<String>,
 }
 
 impl DisplayTransaction {
@@ -196,6 +219,7 @@ impl DisplayTransaction {
                     .destination
                     .clone()
                     .unwrap_or_else(|| "Неизвестно".to_string()),
+                network: None,
             })
         } else {
             None
@@ -203,9 +227,7 @@ impl DisplayTransaction {
     }
 }
 
-// --- Добавленные структуры для транзакции (учебный проект) ---
-
-// Базовая структура транзакции XRP
+// --- Структуры для транзакций ---
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionCommonFields {
     #[serde(rename = "TransactionType")]
@@ -220,7 +242,6 @@ pub struct TransactionCommonFields {
     pub last_ledger_sequence: Option<u32>,
 }
 
-// Специфичные поля для транзакции Payment
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentFields {
     #[serde(rename = "Amount")]
@@ -229,7 +250,7 @@ pub struct PaymentFields {
     pub destination: String,
 }
 
-// --- Добавленные структуры для server_state ---
+// --- Структуры для server_state ---
 #[derive(Serialize, Debug)]
 pub struct ServerStateRequest {
     pub method: String,
@@ -240,7 +261,7 @@ impl ServerStateRequest {
     pub fn new() -> Self {
         ServerStateRequest {
             method: "server_state".to_string(),
-            params: vec![], // Обычно без параметров
+            params: vec![],
         }
     }
 }
@@ -252,25 +273,22 @@ pub struct ServerStateResponse {
 
 #[derive(Deserialize, Debug)]
 pub struct ServerStateResult {
-    pub state: ServerStateInfo,
+    pub state: ServerState,
     pub status: String,
 }
 
 #[derive(Deserialize, Debug)]
-pub struct ServerStateInfo {
-    #[serde(rename = "validated_ledger")]
-    pub validated_ledger: ValidatedLedgerInfo,
+pub struct ServerState {
+    pub server_state: String,
+    pub validated_ledger: ValidatedLedger,
 }
 
 #[derive(Deserialize, Debug)]
-pub struct ValidatedLedgerInfo {
-    #[serde(rename = "seq")] // Или ledger_index
-    pub ledger_index: Option<u32>,
-    #[serde(rename = "base_fee_xrp")]
-    pub base_fee_xrp: Option<String>,
+pub struct ValidatedLedger {
+    pub seq: u32,
 }
 
-// --- Добавленные структуры для submit ---
+// --- Структуры для submit ---
 #[derive(Serialize, Debug)]
 pub struct SubmitRequest {
     pub method: String,
@@ -301,27 +319,26 @@ pub struct SubmitResult {
     pub engine_result: String,
     pub engine_result_code: i32,
     pub engine_result_message: String,
-    pub tx_blob: Option<String>,
-    #[serde(rename = "tx_json")]
-    pub tx_json: Option<serde_json::Value>,
-    pub hash: Option<String>,
     pub status: String,
+    pub tx_blob: String,
+    pub tx_json: serde_json::Value,
 }
 
-impl SubmitResult {
-    // Вспомогательный метод для получения хэша
-    pub fn get_transaction_hash(&self) -> Option<String> {
-        // Приоритет: hash -> tx_json.hash -> tx_blob (нужно парсить)
-        if let Some(hash) = &self.hash {
-            Some(hash.clone())
-        } else if let Some(tx_json) = &self.tx_json {
-            if let Some(hash_val) = tx_json.get("hash") {
-                hash_val.as_str().map(|s| s.to_string())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
+// --- Структуры для Faucet (НОВОЕ) ---
+#[derive(Debug, Deserialize)]
+pub struct FaucetResponse {
+    pub account: String,
+    pub amount: String,
+    #[serde(default)]
+    pub balance: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub tx_hash: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FaucetRequest {
+    pub destination: String,
+    #[serde(rename = "userAgent")]
+    pub user_agent: String,
 }
