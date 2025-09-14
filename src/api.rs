@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
-use serde_json::json;
 
 use crate::models::{
     AccountInfoRequest, AccountInfoResponse, AccountTxRequest, AccountTxResponse,

@@ -253,16 +253,22 @@ async fn handle_send(
         tx_obj.extend(payment_obj.clone());
     }
 
-    // Каноническая сериализация
-    let canonical_json = canonical_serialize(&tx_json)
+    // Каноническая сериализация - передаем два аргумента вместо JSON
+    let canonical_json = canonical_serialize(&common_fields, &payment_fields)
         .context("Не удалось выполнить каноническую сериализацию")?;
 
     // Подписываем транзакцию
     let signature = sign_blob(&canonical_json, &private_key_bytes)
         .context("Не удалось подписать транзакцию")?;
 
-    // Создаем подписанную транзакцию
-    let tx_blob = create_signed_tx_blob(&tx_json, &public_key, &signature)
+    // Создаем подписанную транзакцию - передаем все 5 аргументов
+    let tx_blob = create_signed_tx_blob(
+        canonical_json,  // Vec<u8> - без &
+        signature,       // Vec<u8> - без &
+        public_key,      // Vec<u8> - без &
+        &common_fields,  // &TransactionCommonFields
+        &payment_fields  // &PaymentFields
+    )
         .context("Не удалось создать tx_blob")?;
 
     // Показываем детали транзакции
