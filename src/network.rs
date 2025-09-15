@@ -19,7 +19,7 @@ impl Network {
         match self {
             Network::Mainnet => NetworkConfig {
                 name: "mainnet",
-                rpc_url: "https://xrplcluster.com/",  // Альтернатива: https://s1.ripple.com:51234/
+                rpc_url: "https://xrplcluster.com/", // Альтернатива: https://s1.ripple.com:51234/
                 ws_url: Some("wss://xrplcluster.com/"),
                 explorer_url: "https://livenet.xrpl.org",
                 explorer_tx_url: "https://livenet.xrpl.org/transactions",
@@ -28,9 +28,8 @@ impl Network {
             },
             Network::Testnet => NetworkConfig {
                 name: "testnet",
-                // ИСПРАВЛЕНО: Правильный URL для testnet с портом
-                rpc_url: "https://s.altnet.rippletest.net:51234/",
-                ws_url: Some("wss://s.altnet.rippletest.net:51233"),
+                rpc_url: "https://testnet.xrpl-labs.com/", // <-- ЗАМЕНИЛИ URL
+                ws_url: Some("wss://testnet.xrpl-labs.com/"), // <-- И WebSocket тоже
                 explorer_url: "https://testnet.xrpl.org",
                 explorer_tx_url: "https://testnet.xrpl.org/transactions",
                 faucet_url: Some("https://faucet.altnet.rippletest.net"),

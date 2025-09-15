@@ -3,9 +3,8 @@ use reqwest::Client;
 use std::time::Duration;
 
 use crate::models::{
-    AccountInfoRequest, AccountInfoResponse, AccountTxRequest, AccountTxResponse,
-    FaucetRequest, FaucetResponse, ServerStateRequest, ServerStateResponse,
-    SubmitRequest, SubmitResponse,
+    AccountInfoRequest, AccountInfoResponse, AccountTxRequest, AccountTxResponse, FaucetRequest,
+    FaucetResponse, ServerStateRequest, ServerStateResponse, SubmitRequest, SubmitResponse,
 };
 use crate::network::Network;
 
@@ -18,18 +17,18 @@ pub struct XrpApi {
 impl XrpApi {
     pub fn new(network: Network) -> Result<Self> {
         let config = network.config();
-        
+
         // Создаем клиент с таймаутом
         let client = Client::builder()
-            .timeout(Duration::from_secs(30))  // Увеличиваем таймаут до 30 секунд
-            .connect_timeout(Duration::from_secs(10))  // Таймаут на подключение
+            .timeout(Duration::from_secs(30)) // Увеличиваем таймаут до 30 секунд
+            .connect_timeout(Duration::from_secs(10)) // Таймаут на подключение
             .user_agent("xrp-viewer/0.3.0")
             .build()
             .context("Не удалось создать HTTP клиент")?;
-        
+
         log::info!("🔗 Создан API клиент для сети {}", network);
         log::debug!("   RPC URL: {}", config.rpc_url);
-        
+
         Ok(Self {
             client,
             network,
@@ -121,14 +120,8 @@ impl XrpApi {
             .context("Не удалось разобрать ответ account_tx API")?;
 
         if account_tx.result.status != "success" {
-            log::error!(
-                "API account_tx вернул статус: {}",
-                account_tx.result.status
-            );
-            anyhow::bail!(
-                "API account_tx вернул статус: {}",
-                account_tx.result.status
-            );
+            log::error!("API account_tx вернул статус: {}", account_tx.result.status);
+            anyhow::bail!("API account_tx вернул статус: {}", account_tx.result.status);
         }
 
         log::debug!("Получен ответ account_tx для {}", address);
@@ -153,11 +146,7 @@ impl XrpApi {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Неизвестная ошибка".to_string());
-            log::error!(
-                "API server_state вернул ошибку {}: {}",
-                status,
-                error_text
-            );
+            log::error!("API server_state вернул ошибку {}: {}", status, error_text);
             anyhow::bail!("API server_state вернул ошибку {}: {}", status, error_text);
         }
 
@@ -258,14 +247,14 @@ impl XrpApi {
                 .await
                 .unwrap_or_else(|_| "Неизвестная ошибка".to_string());
             log::error!("Faucet вернул ошибку {}: {}", status, error_text);
-            
+
             // Специальная обработка для частых ошибок
             if error_text.contains("rate limit") {
                 anyhow::bail!("Превышен лимит запросов к faucet. Попробуйте позже.");
             } else if error_text.contains("already funded") {
                 anyhow::bail!("Адрес уже получал тестовые XRP недавно.");
             }
-            
+
             anyhow::bail!("Faucet вернул ошибку {}: {}", status, error_text);
         }
 

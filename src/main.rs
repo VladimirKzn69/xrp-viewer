@@ -24,7 +24,11 @@ use network::Network;
 
 /// XRP кошелек: просмотр баланса и отправка транзакций
 #[derive(Debug, Parser)]
-#[clap(name = "xrp-viewer", version = "0.3.0", about = "XRP кошелек с поддержкой testnet")]
+#[clap(
+    name = "xrp-viewer",
+    version = "0.3.0",
+    about = "XRP кошелек с поддержкой testnet"
+)]
 struct Cli {
     /// Выбор сети: mainnet, testnet, devnet
     #[clap(long, short = 'n', default_value = "mainnet", global = true)]
@@ -111,7 +115,11 @@ async fn main() -> Result<()> {
 
 /// Обработка команды balance
 async fn handle_balance(address: String, network: Network) -> Result<()> {
-    log::debug!("Выполнение команды balance для {} в сети {}", address, network);
+    log::debug!(
+        "Выполнение команды balance для {} в сети {}",
+        address,
+        network
+    );
 
     // Валидация адреса
     if !is_valid_xrp_address(&address) {
@@ -178,7 +186,10 @@ async fn handle_send(
 
     // Предупреждение для mainnet
     if matches!(network, Network::Mainnet) && amount > 100.0 {
-        println!("⚠️  ВНИМАНИЕ: Вы отправляете большую сумму ({} XRP) в MAINNET!", amount);
+        println!(
+            "⚠️  ВНИМАНИЕ: Вы отправляете большую сумму ({} XRP) в MAINNET!",
+            amount
+        );
         println!("Это реальные деньги! Продолжить? (y/N): ");
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
@@ -195,12 +206,12 @@ async fn handle_send(
         .ok_or_else(|| anyhow::anyhow!("Приватный ключ не найден в {}", key_file))?;
 
     // Декодируем приватный ключ
-    let private_key_bytes = decode_wif(&private_key)
-        .context("Не удалось декодировать приватный ключ")?;
+    let private_key_bytes =
+        decode_wif(&private_key).context("Не удалось декодировать приватный ключ")?;
 
     // Получаем публичный ключ
-    let public_key = derive_public_key(&private_key_bytes)
-        .context("Не удалось получить публичный ключ")?;
+    let public_key =
+        derive_public_key(&private_key_bytes).context("Не удалось получить публичный ключ")?;
 
     // Создаем API клиент
     let api = XrpApi::new(network)?;
@@ -267,9 +278,9 @@ async fn handle_send(
         signature,       // Vec<u8> - без &
         public_key,      // Vec<u8> - без &
         &common_fields,  // &TransactionCommonFields
-        &payment_fields  // &PaymentFields
+        &payment_fields, // &PaymentFields
     )
-        .context("Не удалось создать tx_blob")?;
+    .context("Не удалось создать tx_blob")?;
 
     // Показываем детали транзакции
     println!("\n📋 Детали транзакции:");
@@ -305,7 +316,11 @@ async fn handle_send(
 
 /// Обработка команды faucet
 async fn handle_faucet(address: String, network: Network) -> Result<()> {
-    log::debug!("Выполнение команды faucet для {} в сети {}", address, network);
+    log::debug!(
+        "Выполнение команды faucet для {} в сети {}",
+        address,
+        network
+    );
 
     // Проверяем, что это не mainnet
     if matches!(network, Network::Mainnet) {

@@ -38,14 +38,13 @@ impl Config {
 /// Загружает переменные окружения из .env файла
 pub fn load_env_file(path: &str) -> Result<()> {
     let env_path = Path::new(path);
-    
+
     if !env_path.exists() {
         log::warn!("Файл {} не найден", path);
         return Ok(());
     }
 
-    dotenv::from_path(env_path)
-        .with_context(|| format!("Не удалось загрузить файл {}", path))?;
+    dotenv::from_path(env_path).with_context(|| format!("Не удалось загрузить файл {}", path))?;
 
     log::debug!("Конфигурация загружена из {}", path);
     Ok(())
@@ -55,7 +54,7 @@ pub fn load_env_file(path: &str) -> Result<()> {
 pub fn get_private_key(network: &Network) -> Result<Option<String>> {
     // Определяем имя переменной окружения в зависимости от сети
     let env_var = network.private_key_env_var();
-    
+
     // Пытаемся получить ключ для конкретной сети
     match env::var(&env_var) {
         Ok(key) if !key.is_empty() => {
@@ -70,7 +69,10 @@ pub fn get_private_key(network: &Network) -> Result<Option<String>> {
                     Ok(Some(key))
                 }
                 _ => {
-                    log::warn!("Приватный ключ не найден ни в {}, ни в XRP_PRIVATE_KEY", env_var);
+                    log::warn!(
+                        "Приватный ключ не найден ни в {}, ни в XRP_PRIVATE_KEY",
+                        env_var
+                    );
                     Ok(None)
                 }
             }
@@ -87,7 +89,8 @@ pub fn get_env_or_default(key: &str, default: &str) -> String {
 pub fn validate_env() -> Result<()> {
     // Получаем текущую сеть
     let network_str = get_env_or_default("DEFAULT_NETWORK", "mainnet");
-    let network = network_str.parse::<Network>()
+    let network = network_str
+        .parse::<Network>()
         .context("Неверное значение DEFAULT_NETWORK")?;
 
     // Проверяем наличие приватного ключа для текущей сети
@@ -107,8 +110,8 @@ pub fn validate_env() -> Result<()> {
 mod tests {
     use super::*;
     use std::env;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_load_env_file() {
@@ -157,10 +160,7 @@ mod tests {
         writeln!(file, "XRP_PRIVATE_KEY_TESTNET=test_private_key").unwrap();
 
         // Загружаем конфигурацию
-        let config = Config::load(
-            file.path().to_str().unwrap(),
-            Network::Testnet
-        ).unwrap();
+        let config = Config::load(file.path().to_str().unwrap(), Network::Testnet).unwrap();
 
         assert_eq!(config.private_key, Some("test_private_key".to_string()));
         assert!(matches!(config.network, Network::Testnet));

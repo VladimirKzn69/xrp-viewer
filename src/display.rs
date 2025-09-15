@@ -1,6 +1,6 @@
 use crate::models::{
-    AccountInfoResponse, AccountTxResponse, DisplayAccountInfo, DisplayTransaction,
-    FaucetResponse, SubmitResponse,
+    AccountInfoResponse, AccountTxResponse, DisplayAccountInfo, DisplayTransaction, FaucetResponse,
+    SubmitResponse,
 };
 use crate::network::Network;
 
@@ -10,16 +10,17 @@ impl DisplayFormatter {
     /// Отображает информацию об аккаунте
     pub fn account_info(response: &AccountInfoResponse, network: &Network) {
         let account_data = &response.result.account_data;
-        let display_info = DisplayAccountInfo::from_account_data(
-            account_data.account.clone(),
-            account_data,
-        );
+        let display_info =
+            DisplayAccountInfo::from_account_data(account_data.account.clone(), account_data);
 
         println!("\n╔══════════════════════════════════════════╗");
         println!("║           ИНФОРМАЦИЯ О КОШЕЛЬКЕ          ║");
         println!("╠══════════════════════════════════════════╣");
         println!("║ 🌐 Сеть:     {:28} ║", network.to_string());
-        println!("║ 📍 Адрес:    {:28} ║", truncate_address(&display_info.address));
+        println!(
+            "║ 📍 Адрес:    {:28} ║",
+            truncate_address(&display_info.address)
+        );
         println!("║ 💰 Баланс:   {:>20.6} XRP    ║", display_info.balance_xrp);
         println!("║ 🔢 Sequence: {:>28} ║", account_data.sequence);
         println!("╚══════════════════════════════════════════╝");
@@ -75,7 +76,7 @@ impl DisplayFormatter {
             // Извлекаем хэш транзакции из tx_json
             if let Some(hash) = result.tx_json.get("hash").and_then(|h| h.as_str()) {
                 println!("   Хэш: {}", hash);
-                
+
                 // Показываем ссылку на эксплорер
                 let config = network.config();
                 println!("\n🔗 Посмотреть в эксплорере:");
@@ -86,7 +87,7 @@ impl DisplayFormatter {
             println!("   Сеть: {}", network);
             println!("   Код: {}", result.engine_result);
             println!("   Сообщение: {}", result.engine_result_message);
-            
+
             // Дополнительные подсказки по ошибкам
             match result.engine_result.as_str() {
                 "tecUNFUNDED_PAYMENT" => {
@@ -109,7 +110,7 @@ impl DisplayFormatter {
         println!("   Сеть: {}", network);
         println!("   Адрес: {}", response.account);
         println!("   Сумма: {} drops", response.amount);
-        
+
         // Конвертируем drops в XRP
         if let Ok(drops) = response.amount.parse::<u64>() {
             let xrp = drops as f64 / 1_000_000.0;
@@ -122,7 +123,7 @@ impl DisplayFormatter {
 
         if let Some(tx_hash) = &response.tx_hash {
             println!("   Транзакция: {}", tx_hash);
-            
+
             // Показываем ссылку на эксплорер
             let config = network.config();
             println!("\n🔗 Посмотреть в эксплорере:");
@@ -133,24 +134,35 @@ impl DisplayFormatter {
     /// Отображает информацию о сети
     pub fn network_info(network: &Network) {
         let config = network.config();
-        
+
         println!("\n╔══════════════════════════════════════════════════════╗");
         println!("║                 ИНФОРМАЦИЯ О СЕТИ                    ║");
         println!("╠══════════════════════════════════════════════════════╣");
         println!("║ 🌐 Название: {:40} ║", config.name);
-        println!("║ 🔗 RPC URL:  {:40} ║", truncate_string(config.rpc_url, 40));
-        println!("║ 🔍 Explorer: {:40} ║", truncate_string(config.explorer_url, 40));
-        
+        println!(
+            "║ 🔗 RPC URL:  {:40} ║",
+            truncate_string(config.rpc_url, 40)
+        );
+        println!(
+            "║ 🔍 Explorer: {:40} ║",
+            truncate_string(config.explorer_url, 40)
+        );
+
         if let Some(ws_url) = config.ws_url {
             println!("║ 🔌 WebSocket: {:39} ║", truncate_string(ws_url, 39));
         }
-        
+
         if let Some(faucet_url) = config.faucet_url {
             println!("║ 💧 Faucet:   {:40} ║", truncate_string(faucet_url, 40));
         }
-        
-        println!("║ 🏷️  Тип:      {:40} ║", 
-            if config.is_production { "Production (Реальная сеть)" } else { "Testnet (Тестовая сеть)" }
+
+        println!(
+            "║ 🏷️  Тип:      {:40} ║",
+            if config.is_production {
+                "Production (Реальная сеть)"
+            } else {
+                "Testnet (Тестовая сеть)"
+            }
         );
         println!("╚══════════════════════════════════════════════════════╝");
 
@@ -168,12 +180,15 @@ impl DisplayFormatter {
         // Показываем команды для текущей сети
         println!("\n📝 Примеры команд для сети {}:", network);
         println!("   cargo run -- -n {} balance <адрес>", network);
-        
+
         if !config.is_production {
             println!("   cargo run -- -n {} faucet <адрес>", network);
         }
-        
-        println!("   cargo run -- -n {} send --from <адрес> --to <адрес> --amount <сумма>", network);
+
+        println!(
+            "   cargo run -- -n {} send --from <адрес> --to <адрес> --amount <сумма>",
+            network
+        );
     }
 
     /// Отображает ошибку
