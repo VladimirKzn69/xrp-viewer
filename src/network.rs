@@ -1,29 +1,25 @@
-//! Модуль для управления различными сетями XRP Ledger
-//! Поддерживает Mainnet, Testnet и Devnet
-
 use anyhow::{anyhow, Result};
-use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
-/// Доступные сети XRP Ledger
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Поддерживаемые сети XRP Ledger
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Network {
-    /// Основная сеть с реальными XRP
+    /// Основная сеть (production)
     Mainnet,
-    /// Тестовая сеть для разработки
+    /// Тестовая сеть
     Testnet,
-    /// Экспериментальная сеть для новых функций
+    /// Сеть для разработки
     Devnet,
 }
 
 impl Network {
-    /// Получить конфигурацию для выбранной сети
+    /// Возвращает конфигурацию для выбранной сети
     pub fn config(&self) -> NetworkConfig {
         match self {
             Network::Mainnet => NetworkConfig {
                 name: "mainnet",
-                rpc_url: "https://xrplcluster.com/",
+                rpc_url: "https://xrplcluster.com/",  // Альтернатива: https://s1.ripple.com:51234/
                 ws_url: Some("wss://xrplcluster.com/"),
                 explorer_url: "https://livenet.xrpl.org",
                 explorer_tx_url: "https://livenet.xrpl.org/transactions",
@@ -32,11 +28,12 @@ impl Network {
             },
             Network::Testnet => NetworkConfig {
                 name: "testnet",
+                // ИСПРАВЛЕНО: Правильный URL для testnet с портом
                 rpc_url: "https://s.altnet.rippletest.net:51234/",
                 ws_url: Some("wss://s.altnet.rippletest.net:51233"),
                 explorer_url: "https://testnet.xrpl.org",
                 explorer_tx_url: "https://testnet.xrpl.org/transactions",
-                faucet_url: Some("https://faucet.altnet.rippletest.net/accounts"),
+                faucet_url: Some("https://faucet.altnet.rippletest.net"),
                 is_production: false,
             },
             Network::Devnet => NetworkConfig {
@@ -45,32 +42,25 @@ impl Network {
                 ws_url: Some("wss://s.devnet.rippletest.net:51233"),
                 explorer_url: "https://devnet.xrpl.org",
                 explorer_tx_url: "https://devnet.xrpl.org/transactions",
-                faucet_url: Some("https://faucet.devnet.rippletest.net/accounts"),
+                faucet_url: Some("https://faucet.devnet.rippletest.net"),
                 is_production: false,
             },
         }
     }
 
-    /// Получить сеть из переменной окружения или значение по умолчанию
-    pub fn from_env() -> Self {
-        std::env::var("XRP_NETWORK")
-            .ok()
-            .and_then(|s| Self::from_str(&s).ok())
-            .unwrap_or(Network::Mainnet)
-    }
-
-    /// Получить ключ переменной окружения для приватного ключа
-    pub fn private_key_env_var(&self) -> &'static str {
+    /// Возвращает имя переменной окружения для приватного ключа
+    pub fn private_key_env_var(&self) -> String {
         match self {
-            Network::Mainnet => "XRP_PRIVATE_KEY_MAINNET",
-            Network::Testnet => "XRP_PRIVATE_KEY_TESTNET",
-            Network::Devnet => "XRP_PRIVATE_KEY_DEVNET",
+            Network::Mainnet => "XRP_PRIVATE_KEY_MAINNET".to_string(),
+            Network::Testnet => "XRP_PRIVATE_KEY_TESTNET".to_string(),
+            Network::Devnet => "XRP_PRIVATE_KEY_DEVNET".to_string(),
         }
     }
+}
 
-    /// Проверить, является ли сеть production (mainnet)
-    pub fn is_production(&self) -> bool {
-        matches!(self, Network::Mainnet)
+impl Default for Network {
+    fn default() -> Self {
+        Network::Mainnet
     }
 }
 
@@ -160,5 +150,13 @@ mod tests {
             Network::Testnet.private_key_env_var(),
             "XRP_PRIVATE_KEY_TESTNET"
         );
+    }
+
+    #[test]
+    fn test_testnet_url() {
+        let testnet = Network::Testnet.config();
+        // Проверяем что URL содержит порт
+        assert!(testnet.rpc_url.contains(":51234"));
+        assert_eq!(testnet.rpc_url, "https://s.altnet.rippletest.net:51234/");
     }
 }

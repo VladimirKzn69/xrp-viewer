@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
+use std::time::Duration;
 
 use crate::models::{
     AccountInfoRequest, AccountInfoResponse, AccountTxRequest, AccountTxResponse,
@@ -17,8 +18,20 @@ pub struct XrpApi {
 impl XrpApi {
     pub fn new(network: Network) -> Result<Self> {
         let config = network.config();
+        
+        // Создаем клиент с таймаутом
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))  // Увеличиваем таймаут до 30 секунд
+            .connect_timeout(Duration::from_secs(10))  // Таймаут на подключение
+            .user_agent("xrp-viewer/0.3.0")
+            .build()
+            .context("Не удалось создать HTTP клиент")?;
+        
+        log::info!("🔗 Создан API клиент для сети {}", network);
+        log::debug!("   RPC URL: {}", config.rpc_url);
+        
         Ok(Self {
-            client: Client::new(),
+            client,
             network,
             base_url: config.rpc_url.to_string(),
         })
