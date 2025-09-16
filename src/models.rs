@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 // --- Структуры для account_info ---
 #[derive(Serialize, Debug)]
@@ -112,31 +113,63 @@ pub struct TransactionWrapper {
     pub validated: bool,
 }
 
+// --- ИСПРАВЛЕННАЯ структура Transaction ---
 #[derive(Deserialize, Debug)]
 pub struct Transaction {
     #[serde(rename = "Account")]
     pub account: String,
+
+    // Amount может быть строкой (для XRP) или объектом (для токенов)
     #[serde(rename = "Amount", skip_serializing_if = "Option::is_none")]
-    pub amount: Option<String>,
+    pub amount: Option<Value>, // Изменено с Option<String> на Option<Value>
+
     #[serde(rename = "Destination", skip_serializing_if = "Option::is_none")]
     pub destination: Option<String>,
+
     #[serde(rename = "Fee")]
     pub fee: String,
+
     #[serde(rename = "TransactionType")]
     pub transaction_type: String,
+
     #[serde(rename = "hash")]
     pub hash: String,
+
     #[serde(rename = "date", skip_serializing_if = "Option::is_none")]
     pub date: Option<u64>,
 }
 
 impl Transaction {
     pub fn amount_xrp(&self) -> f64 {
-        self.amount
-            .as_ref()
-            .and_then(|s| s.parse::<f64>().ok())
-            .unwrap_or(0.0)
-            / 1_000_000.0
+        match &self.amount {
+            Some(Value::String(s)) => {
+                // Это XRP в drops
+                s.parse::<f64>().unwrap_or(0.0) / 1_000_000.0
+            }
+            Some(Value::Object(obj)) => {
+                // Это токен - показываем 0 для XRP
+                // Можно расширить для показа токенов
+                0.0
+            }
+            _ => 0.0,
+        }
+    }
+
+    pub fn is_token_transaction(&self) -> bool {
+        matches!(&self.amount, Some(Value::Object(_)))
+    }
+
+    pub fn get_token_info(&self) -> Option<String> {
+        if let Some(Value::Object(obj)) = &self.amount {
+            let currency = obj
+                .get("currency")
+                .and_then(|v| v.as_str())
+                .unwrap_or("???");
+            let value = obj.get("value").and_then(|v| v.as_str()).unwrap_or("0");
+            Some(format!("{} {}", value, currency))
+        } else {
+            None
+        }
     }
 
     pub fn formatted_date(&self) -> String {
@@ -201,6 +234,7 @@ impl DisplayAccountInfo {
 pub struct DisplayTransaction {
     pub hash: String,
     pub amount_xrp: f64,
+    pub token_info: Option<String>, // Новое поле для токенов
     pub timestamp: String,
     pub from: String,
     pub to: String,
@@ -213,6 +247,7 @@ impl DisplayTransaction {
             Some(DisplayTransaction {
                 hash: tx.hash.clone(),
                 amount_xrp: tx.amount_xrp(),
+                token_info: tx.get_token_info(), // Получаем информацию о токенах
                 timestamp: tx.formatted_date(),
                 from: tx.account.clone(),
                 to: tx
@@ -324,7 +359,7 @@ pub struct SubmitResult {
     pub tx_json: serde_json::Value,
 }
 
-// --- Структуры для Faucet (НОВОЕ) ---
+// --- Структуры для Faucet ---
 #[derive(Debug, Deserialize)]
 pub struct FaucetResponse {
     pub account: String,

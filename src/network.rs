@@ -28,8 +28,8 @@ impl Network {
             },
             Network::Testnet => NetworkConfig {
                 name: "testnet",
-                rpc_url: "https://testnet.xrpl-labs.com/", // <-- ЗАМЕНИЛИ URL
-                ws_url: Some("wss://testnet.xrpl-labs.com/"), // <-- И WebSocket тоже
+                rpc_url: "https://s.altnet.rippletest.net:51234/", // Вернемся к официальному
+                ws_url: Some("wss://s.altnet.rippletest.net:51233"),
                 explorer_url: "https://testnet.xrpl.org",
                 explorer_tx_url: "https://testnet.xrpl.org/transactions",
                 faucet_url: Some("https://faucet.altnet.rippletest.net"),
