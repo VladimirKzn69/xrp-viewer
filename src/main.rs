@@ -15,7 +15,7 @@ mod xrp_codec;
 use api::XrpApi;
 use config::Config;
 use crypto::{
-    canonical_serialize, create_signed_tx_blob, decode_wif, derive_public_key,
+    canonical_serialize, create_signed_tx_blob, decode_private_key, derive_public_key,
     is_valid_xrp_address, sign_blob,
 };
 use display::DisplayFormatter;
@@ -207,7 +207,26 @@ async fn handle_send(
 
     // Декодируем приватный ключ
     let private_key_bytes =
-        decode_wif(&private_key).context("Не удалось декодировать приватный ключ")?;
+        decode_private_key(&private_key).context("Не удалось декодировать приватный ключ")?;
+
+    // ДОБАВЬТЕ ЭТИ СТРОКИ ДЛЯ ОТЛАДКИ:
+    log::info!(
+        "🔑 Размер декодированного приватного ключа: {} байт",
+        private_key_bytes.len()
+    );
+    log::debug!(
+        "   Первые 10 байт: {:?}",
+        &private_key_bytes[..10.min(private_key_bytes.len())]
+    );
+
+    // Проверяем размер ключа
+    if private_key_bytes.len() != 32 {
+        anyhow::bail!(
+            "Неверный размер приватного ключа: {} байт (ожидается 32). \
+            Проверьте формат ключа в .env файле.",
+            private_key_bytes.len()
+        );
+    }
 
     // Получаем публичный ключ
     let public_key =
@@ -225,7 +244,7 @@ async fn handle_send(
 
     // Проверяем баланс
     let balance = account_info.result.account_data.balance_xrp();
-    if balance < amount + 10.0 {
+    if balance < amount + 1.0 {
         anyhow::bail!(
             "Недостаточно средств. Баланс: {} XRP, требуется: {} XRP (+ 10 XRP резерв)",
             balance,

@@ -292,43 +292,80 @@ pub fn decode_wif(wif: &str) -> Result<Vec<u8>> {
 }
 
 /// Получает публичный ключ из приватного (в сжатом формате для XRP)
-pub fn derive_public_key(private_key_bytes: &[u8]) -> Result<Vec<u8>> {
-    let secret_key = SecretKey::from_bytes(private_key_bytes.into())
-        .map_err(|e| anyhow::anyhow!("Ошибка создания SecretKey: {}", e))?;
+pub fn derive_public_key(private_key: &[u8]) -> Result<Vec<u8>> {
+    use k256::ecdsa::SigningKey;
+    use k256::elliptic_curve::sec1::ToEncodedPoint;
 
-    let signing_key = SigningKey::from(&secret_key);
-    let verifying_key = VerifyingKey::from(&signing_key);
+    log::debug!("🔑 Генерация публичного ключа из приватного...");
+    log::debug!("   Размер приватного ключа: {} байт", private_key.len());
 
-    // XRP использует сжатый формат публичного ключа (33 байта)
-    let encoded_point = verifying_key.to_encoded_point(true); // true = compressed
+    // Проверяем размер приватного ключа
+    if private_key.len() != 32 {
+        return Err(anyhow!(
+            "Неверный размер приватного ключа для derive_public_key: {} байт (ожидается 32)",
+            private_key.len()
+        ));
+    }
 
-    log::debug!(
-        "Публичный ключ (compressed): {} байт",
-        encoded_point.as_bytes().len()
-    );
+    // Создаем SigningKey из байтов приватного ключа
+    let signing_key = SigningKey::from_slice(private_key)
+        .map_err(|e| anyhow!("Не удалось создать signing key: {}", e))?;
 
-    Ok(encoded_point.as_bytes().to_vec())
+    // Получаем публичный ключ
+    let verifying_key = signing_key.verifying_key();
+
+    // Преобразуем в сжатый формат (33 байта)
+    let point = verifying_key.to_encoded_point(true);
+    let public_key_bytes = point.as_bytes().to_vec();
+
+    log::debug!("   ✅ Публичный ключ: {} байт", public_key_bytes.len());
+
+    Ok(public_key_bytes)
 }
 
 /// Подписывает данные приватным ключом для XRP
-pub fn sign_blob(private_key_bytes: &[u8], blob: &[u8]) -> Result<Vec<u8>> {
-    let signing_key = SigningKey::from_bytes(private_key_bytes.into())
-        .map_err(|e| anyhow::anyhow!("Ошибка создания SigningKey: {}", e))?;
-
-    // Используем функцию хэширования из xrp_codec
-    let hash_to_sign = hash_for_signing(blob);
-
-    log::debug!("Хэш для подписи: {}", hex::encode(&hash_to_sign));
-
-    // Подписываем хэш
-    let signature: Signature = signing_key.sign(&hash_to_sign);
-
+pub fn sign_blob(data: &[u8], private_key: &[u8]) -> Result<Vec<u8>> {
+    use k256::ecdsa::{signature::Signer, Signature, SigningKey};
+    use sha2::{Digest, Sha256};
+    
+    log::debug!("🔏 Подписываем данные...");
+    log::debug!("   Размер данных: {} байт", data.len());
+    log::debug!("   Размер приватного ключа: {} байт", private_key.len());
+    
+    // Проверяем размер приватного ключа
+    if private_key.len() != 32 {
+        return Err(anyhow!(
+            "Неверный размер приватного ключа для подписи: {} байт (ожидается 32)",
+            private_key.len()
+        ));
+    }
+    
+    // Хешируем данные с префиксом для XRP
+    let mut hasher = Sha256::new();
+    hasher.update(b"STX\0"); // Префикс для подписываемых транзакций
+    hasher.update(data);
+    let hash = hasher.finalize();
+    
+    log::debug!("   Хеш для подписи: {} байт", hash.len());
+    
+    // Еще раз хешируем (double SHA256 для XRP)
+    let mut hasher2 = Sha256::new();
+    hasher2.update(&hash);
+    let final_hash = hasher2.finalize();
+    
+    // Создаем ключ для подписи
+    let signing_key = SigningKey::from_slice(private_key)
+        .map_err(|e| anyhow!("Не удалось создать signing key: {}", e))?;
+    
+    // Подписываем
+    let signature: Signature = signing_key.sign(&final_hash[..]);
+    
     // Конвертируем в DER формат
-    let der_bytes = signature.to_der();
-
-    log::debug!("Подпись (DER): {} байт", der_bytes.as_bytes().len());
-
-    Ok(der_bytes.as_bytes().to_vec())
+    let der_bytes = signature.to_der().to_bytes().to_vec();
+    
+    log::debug!("   ✅ Подпись создана: {} байт", der_bytes.len());
+    
+    Ok(der_bytes)
 }
 
 /// Правильная сериализация транзакции XRP
@@ -448,6 +485,150 @@ pub fn public_key_to_address(public_key: &[u8]) -> Result<String> {
 
     // 6. XRP Base58 кодирование
     Ok(xrp_base58_encode(&address_bytes))
+}
+
+// Добавьте эти функции в crypto.rs после существующих импортов
+
+/// Декодирует XRP secret key (Family Seed - начинается с 's')
+pub fn decode_xrp_secret(secret: &str) -> Result<Vec<u8>> {
+    use sha2::{Digest, Sha512};
+
+    log::info!("🔐 Декодируем XRP secret key");
+    log::debug!("   Secret начинается с: {}", &secret[..4.min(secret.len())]);
+
+    // Проверяем формат
+    if !secret.starts_with('s') {
+        return Err(anyhow!("XRP secret key должен начинаться с 's'"));
+    }
+
+    // Декодируем из XRP Base58
+    let decoded = xrp_base58_decode(secret)?;
+    log::debug!("   Декодировано {} байт из Base58", decoded.len());
+
+    if decoded.len() < 17 {
+        // Минимум: 1 байт тип + 16 байт seed
+        return Err(anyhow!(
+            "Слишком короткий secret key: {} байт",
+            decoded.len()
+        ));
+    }
+
+    // Для XRP secret keys:
+    // - Первый байт - тип (0x21 для ED25519 или другое для secp256k1)
+    // - Следующие 16 байт - seed
+    // - Остальное - контрольная сумма
+
+    let key_type = decoded[0];
+    log::debug!("   Тип ключа: 0x{:02x}", key_type);
+
+    // Извлекаем seed (16 байт после типа)
+    let seed = &decoded[1..17];
+    log::debug!("   Seed: {} байт", seed.len());
+
+    // Генерируем приватный ключ из seed
+    let private_key = if secret.starts_with("sEd") || key_type == 0xED {
+        // ED25519 (новый формат)
+        log::info!("   📝 Используем ED25519 алгоритм");
+        let mut hasher = Sha512::new();
+        hasher.update(seed);
+        let hash = hasher.finalize();
+        // ВАЖНО: Берем только первые 32 байта!
+        hash[..32].to_vec()
+    } else {
+        // SECP256K1 (стандартный формат)
+        log::info!("   📝 Используем SECP256K1 алгоритм");
+
+        // Для secp256k1 используем специальный discriminant
+        let mut discriminant = 0u32;
+        loop {
+            let mut hasher = Sha512::new();
+            hasher.update(seed);
+            hasher.update(&discriminant.to_be_bytes());
+            let hash = hasher.finalize();
+
+            // Проверяем, что первые 32 байта дают валидный приватный ключ
+            // Для secp256k1 ключ должен быть меньше чем порядок группы
+            let key_bytes = &hash[..32];
+
+            // Простая проверка - не все нули и не все единицы
+            if key_bytes.iter().any(|&b| b != 0) && key_bytes.iter().any(|&b| b != 0xFF) {
+                log::debug!(
+                    "   ✅ Валидный ключ найден с discriminant: {}",
+                    discriminant
+                );
+                return Ok(key_bytes.to_vec());
+            }
+
+            discriminant += 1;
+            if discriminant > 10 {
+                return Err(anyhow!("Не удалось сгенерировать валидный ключ из seed"));
+            }
+        }
+    };
+
+    // Проверяем размер результата
+    if private_key.len() != 32 {
+        return Err(anyhow!(
+            "Неверный размер сгенерированного ключа: {} (должно быть 32)",
+            private_key.len()
+        ));
+    }
+
+    log::info!("   ✅ Приватный ключ получен: {} байт", private_key.len());
+    Ok(private_key)
+}
+
+/// Универсальная функция для декодирования приватного ключа из разных форматов
+pub fn decode_private_key(key_str: &str) -> Result<Vec<u8>> {
+    let key_str = key_str.trim(); // Убираем пробелы
+
+    log::info!("🔑 Определяем формат приватного ключа...");
+    log::debug!("   Первые символы: {}", &key_str[..4.min(key_str.len())]);
+    log::debug!("   Длина: {} символов", key_str.len());
+
+    let result = if key_str.starts_with('s') {
+        // XRP Secret Key (Family Seed)
+        log::info!("📝 Обнаружен XRP secret key (Family Seed)");
+        decode_xrp_secret(key_str)?
+    } else if key_str.starts_with('L') || key_str.starts_with('K') || key_str.starts_with('5') {
+        // WIF формат
+        log::info!("📝 Обнаружен WIF формат ключа");
+        decode_wif(key_str)?
+    } else if key_str.len() == 64 && key_str.chars().all(|c| c.is_ascii_hexdigit()) {
+        // Hex формат (64 символа = 32 байта)
+        log::info!("📝 Обнаружен HEX формат ключа");
+        hex::decode(key_str).context("Не удалось декодировать hex приватный ключ")?
+    } else if key_str.starts_with("0x") && key_str.len() == 66 {
+        // Hex формат с префиксом 0x
+        log::info!("📝 Обнаружен HEX формат с префиксом 0x");
+        hex::decode(&key_str[2..]).context("Не удалось декодировать hex приватный ключ")?
+    } else {
+        return Err(anyhow!(
+            "Неподдерживаемый формат приватного ключа.\n\
+             Обнаружен префикс: '{}'\n\
+             Длина: {} символов\n\
+             Поддерживаются форматы:\n\
+             - XRP secret (начинается с 's', например: sEd7rBGm5kxzauRT...)\n\
+             - WIF (начинается с 'L', 'K' или '5')\n\
+             - HEX (64 символа, например: ED4D6B5F3C96...)",
+            &key_str[..3.min(key_str.len())],
+            key_str.len()
+        ));
+    };
+
+    // ВАЖНО: Проверяем размер результата
+    if result.len() != 32 {
+        return Err(anyhow!(
+            "Декодированный ключ имеет неверный размер: {} байт (ожидается 32).\n\
+             Формат ключа: {}\n\
+             Это может быть проблема с форматом ключа в .env файле.",
+            result.len(),
+            &key_str[..4.min(key_str.len())]
+        ));
+    }
+
+    log::info!("✅ Приватный ключ успешно декодирован: 32 байта");
+    Ok(result)
 }
 
 // =====================================

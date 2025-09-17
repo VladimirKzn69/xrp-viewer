@@ -5,9 +5,9 @@
 //! Этот модуль реализует спецификацию бинарной сериализации XRP Ledger
 //! Подробная документация: https://xrpl.org/serialization.html
 
-use anyhow::{anyhow, Result};
-use base58::FromBase58;
-use sha2::{Digest, Sha256, Sha512};
+use anyhow::Result;
+// use base58::FromBase58;
+use sha2::{Digest, Sha512};
 
 // =====================================
 // 📊 КОНСТАНТЫ И ТИПЫ ПОЛЕЙ XRP
