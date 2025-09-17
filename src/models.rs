@@ -146,7 +146,7 @@ impl Transaction {
                 // Это XRP в drops
                 s.parse::<f64>().unwrap_or(0.0) / 1_000_000.0
             }
-            Some(Value::Object(obj)) => {
+            Some(Value::Object(_obj)) => {
                 // Это токен - показываем 0 для XRP
                 // Можно расширить для показа токенов
                 0.0
@@ -344,19 +344,105 @@ impl SubmitRequest {
     }
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug, Deserialize)]
 pub struct SubmitResponse {
     pub result: SubmitResult,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub error_message: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug, Deserialize)]
 pub struct SubmitResult {
-    pub engine_result: String,
-    pub engine_result_code: i32,
-    pub engine_result_message: String,
-    pub status: String,
-    pub tx_blob: String,
-    pub tx_json: serde_json::Value,
+    // Поля для успешного ответа
+    #[serde(default)]
+    pub accepted: Option<bool>,
+
+    #[serde(default)]
+    pub account_sequence_available: Option<u64>,
+
+    #[serde(default)]
+    pub account_sequence_next: Option<u64>,
+
+    #[serde(default)]
+    pub applied: Option<bool>,
+
+    #[serde(default)]
+    pub broadcast: Option<bool>,
+
+    #[serde(default)]
+    pub engine_result: Option<String>,
+
+    #[serde(default)]
+    pub engine_result_code: Option<i32>,
+
+    #[serde(default)]
+    pub engine_result_message: Option<String>,
+
+    #[serde(default)]
+    pub kept: Option<bool>,
+
+    #[serde(default)]
+    pub open_ledger_cost: Option<String>,
+
+    #[serde(default)]
+    pub queued: Option<bool>,
+
+    #[serde(default)]
+    pub tx_blob: Option<String>,
+
+    #[serde(default)]
+    pub tx_json: Option<serde_json::Value>,
+
+    #[serde(default)]
+    pub validated_ledger_index: Option<u64>,
+
+    // Поля для ошибок
+    #[serde(default)]
+    pub error: Option<String>,
+
+    #[serde(default)]
+    pub error_code: Option<i32>,
+
+    #[serde(default)]
+    pub error_message: Option<String>,
+
+    #[serde(default)]
+    pub error_exception: Option<String>,
+}
+
+impl SubmitResult {
+    /// Проверяет, успешна ли транзакция
+    pub fn is_success(&self) -> bool {
+        matches!(
+            self.engine_result.as_deref(),
+            Some("tesSUCCESS") | Some("terQUEUED")
+        )
+    }
+
+    /// Получает сообщение об ошибке, если есть
+    pub fn get_error_message(&self) -> Option<String> {
+        if self.is_success() {
+            return None;
+        }
+
+        // Приоритет: error_message > engine_result_message > error
+        self.error_message
+            .clone()
+            .or_else(|| self.engine_result_message.clone())
+            .or_else(|| self.error.clone())
+            .or_else(|| self.engine_result.clone())
+    }
+
+    /// Получает хэш транзакции из tx_json
+    pub fn get_tx_hash(&self) -> Option<String> {
+        self.tx_json.as_ref().and_then(|json| {
+            json.get("hash")
+                .and_then(|h| h.as_str())
+                .map(|s| s.to_string())
+        })
+    }
 }
 
 // --- Структуры для Faucet ---

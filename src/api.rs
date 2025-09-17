@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
+use serde_json::json;
 use std::time::Duration;
 
 use crate::models::{
     AccountInfoRequest, AccountInfoResponse, AccountTxRequest, AccountTxResponse, FaucetRequest,
-    FaucetResponse, ServerStateRequest, ServerStateResponse, SubmitRequest, SubmitResponse,
+    FaucetResponse, ServerStateRequest, ServerStateResponse, SubmitResponse, SubmitResult,
 };
 use crate::network::Network;
 
@@ -229,46 +230,103 @@ impl XrpApi {
         Ok(state_response)
     }
 
-    pub async fn submit_transaction(&self, tx_blob: &str) -> Result<SubmitResponse> {
-        let request = SubmitRequest::new(tx_blob.to_string());
-        log::debug!("Отправка транзакции в сеть {}", self.network);
+    /// Отправляет подписанную транзакцию в XRP Ledger
+    pub async fn submit_transaction(&self, tx_blob: &str) -> Result<SubmitResult> {
+        log::info!("Отправка транзакции в сеть...");
+        log::debug!("TX Blob length: {} bytes", tx_blob.len());
 
+        let request = json!({
+            "method": "submit",
+            "params": [{
+                "tx_blob": tx_blob
+            }]
+        });
+
+        log::debug!(
+            "Submit request: {}",
+            serde_json::to_string_pretty(&request)?
+        );
+
+        // Используем self.client и self.base_url вместо client.client
         let response = self
             .client
-            .post(&self.base_url)
+            .post(&self.base_url) // Используем base_url вместо endpoint
             .json(&request)
             .send()
             .await
-            .context("Не удалось отправить запрос submit к API")?;
+            .context("Ошибка отправки запроса")?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Неизвестная ошибка".to_string());
-            log::error!("API вернул ошибку submit {}: {}", status, error_text);
-            anyhow::bail!("API вернул ошибку submit {}: {}", status, error_text);
+        let status = response.status();
+        let response_text: String = response.text().await?; // Явно указываем тип
+
+        log::debug!("Response status: {}", status);
+        log::debug!("Response body: {}", response_text);
+
+        // Попробуем распарсить JSON ответ
+        let response_json: serde_json::Value =
+            serde_json::from_str(&response_text).context("Ошибка парсинга JSON ответа")?;
+
+        // Проверяем наличие ошибки на уровне JSON-RPC
+        if let Some(error) = response_json.get("error") {
+            let error_message = error
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("Неизвестная ошибка");
+            let error_code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
+
+            log::error!("JSON-RPC error: {} (code: {})", error_message, error_code);
+
+            // Создаем SubmitResult с информацией об ошибке
+            return Ok(SubmitResult {
+                error: Some(error_message.to_string()),
+                error_code: Some(error_code as i32),
+                error_message: Some(error_message.to_string()),
+                accepted: None,
+                account_sequence_available: None,
+                account_sequence_next: None,
+                applied: None,
+                broadcast: None,
+                engine_result: None,
+                engine_result_code: None,
+                engine_result_message: None,
+                kept: None,
+                open_ledger_cost: None,
+                queued: None,
+                tx_blob: None,
+                tx_json: None,
+                validated_ledger_index: None,
+                error_exception: None,
+            });
         }
 
-        let submit_response: SubmitResponse = response
-            .json()
-            .await
-            .context("Не удалось разобрать ответ submit API")?;
+        // Парсим результат
+        let submit_response: SubmitResponse = serde_json::from_value(response_json)
+            .context("Ошибка десериализации SubmitResponse")?;
 
-        if submit_response.result.status != "success" {
-            log::error!(
-                "API submit вернул статус: {}",
-                submit_response.result.status
-            );
-            anyhow::bail!(
-                "API submit вернул статус: {}",
-                submit_response.result.status
-            );
+        // Логируем результат
+        if let Some(engine_result) = &submit_response.result.engine_result {
+            log::info!("Engine result: {}", engine_result);
+            if let Some(message) = &submit_response.result.engine_result_message {
+                log::info!("Engine message: {}", message);
+            }
         }
 
-        log::debug!("Транзакция успешно отправлена");
-        Ok(submit_response)
+        // Проверяем на успех
+        if submit_response.result.is_success() {
+            if let Some(tx_hash) = submit_response.result.get_tx_hash() {
+                log::info!("✅ Транзакция успешно отправлена! Hash: {}", tx_hash);
+            } else {
+                log::info!("✅ Транзакция принята в очередь");
+            }
+        } else {
+            let error_msg = submit_response
+                .result
+                .get_error_message()
+                .unwrap_or_else(|| "Неизвестная ошибка".to_string());
+            log::error!("❌ Ошибка отправки транзакции: {}", error_msg);
+        }
+
+        Ok(submit_response.result)
     }
 
     pub async fn request_from_faucet(&self, address: &str) -> Result<FaucetResponse> {
@@ -325,6 +383,32 @@ impl XrpApi {
         );
 
         Ok(faucet_response)
+    }
+}
+
+// Добавим также реализацию Default для SubmitResult
+impl Default for SubmitResult {
+    fn default() -> Self {
+        Self {
+            accepted: None,
+            account_sequence_available: None,
+            account_sequence_next: None,
+            applied: None,
+            broadcast: None,
+            engine_result: None,
+            engine_result_code: None,
+            engine_result_message: None,
+            kept: None,
+            open_ledger_cost: None,
+            queued: None,
+            tx_blob: None,
+            tx_json: None,
+            validated_ledger_index: None,
+            error: None,
+            error_code: None,
+            error_message: None,
+            error_exception: None,
+        }
     }
 }
 

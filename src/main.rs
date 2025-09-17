@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use std::error::Error;
 use std::str::FromStr;
 
 // Подключаем наши модули
@@ -322,14 +323,126 @@ async fn handle_send(
 
     // Отправляем транзакцию
     println!("\n⏳ Отправка транзакции в сеть {}...", network);
-    let submit_result = api
-        .submit_transaction(&tx_blob)
-        .await
-        .context("Не удалось отправить транзакцию")?;
 
-    // Выводим результат
-    DisplayFormatter::submit_result(&submit_result, &network);
+    match api.submit_transaction(&tx_blob).await {
+        Ok(result) => {
+            // Проверяем результат
+            if result.is_success() {
+                // Успех!
+                println!("\n✅ Транзакция отправлена успешно!");
+                println!("🌐 Сеть: {}", network);
 
+                if let Some(hash) = result.get_tx_hash() {
+                    println!("📋 Хэш транзакции: {}", hash);
+                    println!(
+                        "🔍 Проверить статус: https://livenet.xrpl.org/transactions/{}",
+                        hash
+                    );
+                }
+
+                if let Some(engine_result) = &result.engine_result {
+                    println!("📊 Статус: {}", engine_result);
+                    if engine_result == "terQUEUED" {
+                        println!("⏳ Транзакция добавлена в очередь и будет обработана позже");
+                    }
+                }
+
+                if let Some(sequence) = result.account_sequence_next {
+                    log::debug!("Следующий sequence: {}", sequence);
+                }
+            } else {
+                // Ошибка от XRP Ledger
+                println!("\n❌ Транзакция отклонена сетью XRP Ledger!");
+
+                let error_message = result
+                    .get_error_message()
+                    .unwrap_or_else(|| "Неизвестная ошибка".to_string());
+
+                println!("💬 Причина: {}", error_message);
+
+                // Дополнительная информация об ошибке
+                if let Some(engine_result) = &result.engine_result {
+                    match engine_result.as_str() {
+                        "tecUNFUNDED_PAYMENT" => {
+                            println!("📝 Недостаточно средств на счету отправителя");
+                            println!("   Проверьте баланс: cargo run -- balance {}", from);
+                        }
+                        "tefBAD_AUTH" => {
+                            println!(
+                                "📝 Неверная подпись или приватный ключ не соответствует адресу"
+                            );
+                            println!(
+                                "   Убедитесь, что ключ в .env соответствует адресу {}",
+                                from
+                            );
+                        }
+                        "tefBAD_AUTH_MASTER" => {
+                            println!("📝 Использован неправильный мастер-ключ");
+                        }
+                        "temBAD_SEQUENCE" => {
+                            println!("📝 Неверный sequence number");
+                            println!("   Возможно, есть pending транзакции");
+                        }
+                        "temBAD_FEE" => {
+                            println!("📝 Недопустимая комиссия");
+                        }
+                        "temBAD_AMOUNT" => {
+                            println!("📝 Недопустимая сумма");
+                            println!("   Минимальная сумма: 0.000001 XRP");
+                        }
+                        "temDST_NEEDED" => {
+                            println!("📝 Адрес получателя не активирован");
+                            println!("   Для активации нового адреса требуется минимум 10 XRP");
+                        }
+                        "tecDST_TAG_NEEDED" => {
+                            println!("📝 Для этого адреса требуется Destination Tag");
+                        }
+                        "tecNO_DST_INSUF_XRP" => {
+                            println!("📝 Адрес получателя не может получить XRP");
+                            println!("   Возможно, получатель заблокировал входящие платежи");
+                        }
+                        _ => {
+                            // Показываем код ошибки для других случаев
+                            if let Some(code) = result.engine_result_code {
+                                println!("📝 Код ошибки: {} ({})", engine_result, code);
+                            }
+                        }
+                    }
+                }
+
+                // Возвращаем ошибку для правильной обработки
+                return Err(anyhow::anyhow!("Транзакция отклонена: {}", error_message));
+            }
+        }
+        Err(e) => {
+            eprintln!("\n❌ Ошибка при отправке транзакции: {}", e);
+
+            // Дополнительный контекст ошибки
+            let mut source = e.source();
+            while let Some(err) = source {
+                eprintln!("  ↳ {}", err);
+                source = err.source();
+            }
+
+            eprintln!("\n💡 Возможные причины:");
+            eprintln!("  • Проверьте подключение к интернету");
+            eprintln!(
+                "  • Убедитесь, что используется правильная сеть ({})",
+                network
+            );
+            eprintln!("  • Проверьте правильность приватного ключа в .env");
+            eprintln!(
+                "  • Убедитесь, что адрес {} соответствует вашему ключу",
+                from
+            );
+
+            if network == Network::Testnet {
+                eprintln!("  • Для testnet используйте переменную XRP_SECRET_KEY_TESTNET");
+            }
+
+            return Err(e);
+        }
+    }
     Ok(())
 }
 

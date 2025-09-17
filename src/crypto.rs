@@ -4,14 +4,14 @@
 use crate::models::{PaymentFields, TransactionCommonFields};
 use anyhow::{anyhow, Context, Result};
 use base58::FromBase58;
-use k256::{
-    ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey},
-    SecretKey,
-};
+// use k256::{
+//    ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey},
+//    SecretKey,
+// };
 use sha2::{Digest, Sha256};
 
 // Импортируем наш новый XRP codec
-use crate::xrp_codec::{hash_for_signing, PaymentTransaction};
+use crate::xrp_codec::PaymentTransaction;
 
 // =====================================
 // 🎯 XRP BASE58 КОДЕК
@@ -327,11 +327,11 @@ pub fn derive_public_key(private_key: &[u8]) -> Result<Vec<u8>> {
 pub fn sign_blob(data: &[u8], private_key: &[u8]) -> Result<Vec<u8>> {
     use k256::ecdsa::{signature::Signer, Signature, SigningKey};
     use sha2::{Digest, Sha256};
-    
+
     log::debug!("🔏 Подписываем данные...");
     log::debug!("   Размер данных: {} байт", data.len());
     log::debug!("   Размер приватного ключа: {} байт", private_key.len());
-    
+
     // Проверяем размер приватного ключа
     if private_key.len() != 32 {
         return Err(anyhow!(
@@ -339,32 +339,32 @@ pub fn sign_blob(data: &[u8], private_key: &[u8]) -> Result<Vec<u8>> {
             private_key.len()
         ));
     }
-    
+
     // Хешируем данные с префиксом для XRP
     let mut hasher = Sha256::new();
     hasher.update(b"STX\0"); // Префикс для подписываемых транзакций
     hasher.update(data);
     let hash = hasher.finalize();
-    
+
     log::debug!("   Хеш для подписи: {} байт", hash.len());
-    
+
     // Еще раз хешируем (double SHA256 для XRP)
     let mut hasher2 = Sha256::new();
     hasher2.update(&hash);
     let final_hash = hasher2.finalize();
-    
+
     // Создаем ключ для подписи
     let signing_key = SigningKey::from_slice(private_key)
         .map_err(|e| anyhow!("Не удалось создать signing key: {}", e))?;
-    
+
     // Подписываем
     let signature: Signature = signing_key.sign(&final_hash[..]);
-    
+
     // Конвертируем в DER формат
     let der_bytes = signature.to_der().to_bytes().to_vec();
-    
+
     log::debug!("   ✅ Подпись создана: {} байт", der_bytes.len());
-    
+
     Ok(der_bytes)
 }
 

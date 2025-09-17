@@ -90,14 +90,28 @@ impl DisplayFormatter {
     pub fn submit_result(response: &SubmitResponse, network: &Network) {
         let result = &response.result;
 
-        if result.engine_result == "tesSUCCESS" {
+        if result.engine_result.as_deref() == Some("tesSUCCESS") {
             println!("\n✅ Транзакция отправлена успешно!");
             println!("   Сеть: {}", network);
-            println!("   Результат: {}", result.engine_result);
-            println!("   Сообщение: {}", result.engine_result_message);
+            println!(
+                "   Результат: {}",
+                result.engine_result.as_deref().unwrap_or("нет данных")
+            );
+            println!(
+                "   Сообщение: {}",
+                result
+                    .engine_result_message
+                    .as_deref()
+                    .unwrap_or("нет сообщения")
+            );
 
             // Извлекаем хэш транзакции из tx_json
-            if let Some(hash) = result.tx_json.get("hash").and_then(|h| h.as_str()) {
+            if let Some(hash) = result
+                .tx_json
+                .as_ref()
+                .and_then(|json| json.get("hash"))
+                .and_then(|h| h.as_str())
+            {
                 println!("   Хэш: {}", hash);
 
                 // Показываем ссылку на эксплорер
@@ -108,21 +122,29 @@ impl DisplayFormatter {
         } else {
             println!("\n❌ Ошибка отправки транзакции");
             println!("   Сеть: {}", network);
-            println!("   Код: {}", result.engine_result);
-            println!("   Сообщение: {}", result.engine_result_message);
+            println!(
+                "   Код: {}",
+                result.engine_result.as_deref().unwrap_or("нет данных")
+            );
+            println!(
+                "   Сообщение: {}",
+                result
+                    .engine_result_message
+                    .as_deref()
+                    .unwrap_or("нет сообщения")
+            );
 
             // Дополнительные подсказки по ошибкам
-            match result.engine_result.as_str() {
-                "tecUNFUNDED_PAYMENT" => {
-                    println!("\n💡 Недостаточно средств для отправки");
+            match result.engine_result.as_deref() {
+                Some(engine_result) => match engine_result {
+                    "tesSUCCESS" => { /* ... */ }
+                    "tecUNFUNDED_PAYMENT" => { /* ... */ }
+                    // другие варианты...
+                    _ => { /* ... */ }
+                },
+                None => {
+                    println!("   Статус транзакции неизвестен");
                 }
-                "tecNO_DST" => {
-                    println!("\n💡 Адрес получателя не активирован (требуется минимум 10 XRP)");
-                }
-                "tefBAD_AUTH" => {
-                    println!("\n💡 Неверная подпись транзакции");
-                }
-                _ => {}
             }
         }
     }
