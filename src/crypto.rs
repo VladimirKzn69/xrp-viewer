@@ -8,9 +8,12 @@ use base58::FromBase58;
 //    ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey},
 //    SecretKey,
 // };
+use k256::ecdsa::{SigningKey, VerifyingKey};
 use sha2::{Digest, Sha256};
 
 // Импортируем наш новый XRP codec
+// use crate::xrp_codec::encode as encode_xrp;
+// use crate::crypto::xrp_base58_encode as encode_xrp;
 use crate::xrp_codec::PaymentTransaction;
 
 // =====================================
@@ -71,7 +74,7 @@ fn xrp_base58_decode(input: &str) -> Result<Vec<u8>> {
 }
 
 /// Кодировать байты в XRP Base58 строку
-fn xrp_base58_encode(input: &[u8]) -> String {
+pub fn xrp_base58_encode(input: &[u8]) -> String {
     if input.is_empty() {
         return String::new();
     }
@@ -294,7 +297,6 @@ pub fn decode_wif(wif: &str) -> Result<Vec<u8>> {
 /// Получает публичный ключ из приватного (в сжатом формате для XRP)
 pub fn derive_public_key(private_key: &[u8]) -> Result<Vec<u8>> {
     use k256::ecdsa::SigningKey;
-    use k256::elliptic_curve::sec1::ToEncodedPoint;
 
     log::debug!("🔑 Генерация публичного ключа из приватного...");
     log::debug!("   Размер приватного ключа: {} байт", private_key.len());
@@ -629,6 +631,108 @@ pub fn decode_private_key(key_str: &str) -> Result<Vec<u8>> {
 
     log::info!("✅ Приватный ключ успешно декодирован: 32 байта");
     Ok(result)
+}
+/// Деривация публичного ключа из приватного
+///
+/// # Аналогия
+/// Это как получение отпечатка пальца из самого пальца - односторонняя операция
+/// Деривация публичного ключа из приватного
+pub fn derive_public_key_from_private(private_key: &SigningKey) -> Result<VerifyingKey> {
+    let verifying_key = private_key.verifying_key();
+    Ok(verifying_key.clone())
+}
+
+/// Генерация XRP адреса из публичного ключа
+///
+/// # Алгоритм
+/// 1. Сжимаем публичный ключ в 33 байта
+/// 2. SHA256 хеширование
+/// 3. RIPEMD160 хеширование результата SHA256
+/// 4. Добавляем префикс 0x00 для mainnet
+/// 5. Base58Check кодирование с XRP алфавитом
+// Полная исправленная функция:
+pub fn derive_xrp_address_from_public_key(public_key: &VerifyingKey) -> Result<String> {
+    use ripemd::Ripemd160;
+    use sha2::{Digest, Sha256};
+
+    // Получаем сжатый публичный ключ (33 байта)
+    let public_key_point = public_key.to_encoded_point(true);
+    let public_key_bytes = public_key_point.as_bytes();
+
+    log::debug!(
+        "Public key compressed (hex): {}",
+        hex::encode(public_key_bytes)
+    );
+
+    // SHA256 -> RIPEMD160
+    let sha256_hash = Sha256::digest(public_key_bytes);
+    let ripemd160_hash = Ripemd160::digest(&sha256_hash);
+
+    // Создаем payload: [0x00 prefix][ripemd160 hash]
+    let mut payload = Vec::with_capacity(21);
+    payload.push(0x00); // Mainnet prefix
+    payload.extend_from_slice(&ripemd160_hash);
+
+    // Используем encode_xrp вместо encode_check_xrp
+    let address = encode_check_xrp(&payload)?;
+
+    log::debug!("Generated XRP address: {}", address);
+
+    Ok(address)
+}
+
+pub fn encode_check_xrp(data: &[u8]) -> Result<String> {
+    use sha2::{Digest, Sha256};
+
+    // Вычисляем двойной SHA256 для checksum
+    let hash1 = Sha256::digest(data);
+    let hash2 = Sha256::digest(&hash1);
+    let checksum = &hash2[0..4];
+
+    // Объединяем данные и checksum
+    let mut result = Vec::with_capacity(data.len() + 4);
+    result.extend_from_slice(data);
+    result.extend_from_slice(checksum);
+
+    // Кодируем в Base58 с XRP алфавитом
+    Ok(xrp_base58_encode(&result))
+}
+
+/// Генерирует XRP адрес из seed (Family Seed)
+pub fn derive_xrp_address_from_seed(seed: &str) -> Result<String> {
+    use sha2::{Digest, Sha512};
+    use k256::ecdsa::SigningKey;
+    
+    // Декодируем seed из Base58
+    let decoded = xrp_base58_decode(seed)
+        .context("Не удалось декодировать seed")?;
+    
+    // Проверяем, что это действительно seed (тип 0x21 для secp256k1)
+    if decoded.len() != 21 || decoded[0] != 0x21 {
+        anyhow::bail!("Неверный формат XRP seed");
+    }
+    
+    // Получаем энтропию (без типа и контрольной суммы)
+    let entropy = &decoded[1..17];
+    
+    // Генерируем приватный ключ из seed
+    let mut hasher = Sha512::new();
+    hasher.update(entropy);
+    hasher.update(&[0u8; 4]); // discriminant для secp256k1
+    let hash = hasher.finalize();
+    
+    // Берем первые 32 байта как приватный ключ
+    let private_key_bytes = &hash[..32];
+    
+    // Создаем SigningKey
+    let signing_key = SigningKey::from_slice(private_key_bytes)
+        .context("Не удалось создать приватный ключ из seed")?;
+    
+    // Получаем публичный ключ
+    let verifying_key = VerifyingKey::from(&signing_key);
+    
+    // Генерируем адрес
+    derive_xrp_address_from_public_key(&verifying_key)
 }
 
 // =====================================

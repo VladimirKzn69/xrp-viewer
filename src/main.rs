@@ -1,7 +1,11 @@
+use crate::config::Config;
+use anyhow::anyhow;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use std::error::Error;
 use std::str::FromStr;
+
+use k256::ecdsa::VerifyingKey;
+use k256::PublicKey;
 
 // Подключаем наши модули
 mod api;
@@ -13,8 +17,8 @@ mod network;
 mod xrp_codec;
 
 // Подключаем конкретные элементы из модулей
+use crate::crypto::derive_xrp_address_from_public_key;
 use api::XrpApi;
-use config::Config;
 use crypto::{
     canonical_serialize, create_signed_tx_blob, decode_private_key, derive_public_key,
     is_valid_xrp_address, sign_blob,
@@ -41,6 +45,8 @@ struct Cli {
 
     #[clap(subcommand)]
     command: Commands,
+    #[clap(long, default_value = ".env")]
+    key_file: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -72,6 +78,12 @@ enum Commands {
     },
     /// Показать информацию о текущей сети
     Network,
+    /// Показать адрес, соответствующий ключу из .env
+    ShowAddress {
+        /// Сеть для проверки
+        #[arg(short = 'n', long, default_value = "mainnet")]
+        network: Network,
+    },
 }
 
 #[tokio::main]
@@ -91,6 +103,9 @@ async fn main() -> Result<()> {
         log::info!("Работаем в сети: {}", network);
     }
 
+    let config = Config::load(&cli.key_file, network.clone())?;
+
+    // Замените блок match в main.rs (строки 100-197) на этот исправленный вариант:
     match cli.command {
         Commands::Balance { address } => {
             handle_balance(address, network).await?;
@@ -103,11 +118,72 @@ async fn main() -> Result<()> {
         } => {
             handle_send(from, to, amount, key_file, network).await?;
         }
+        Commands::Network => {
+            // Создадим простой вывод информации о сети
+            println!("\n🌐 Информация о сети\n");
+            println!("Сеть: {}", network.config().name);
+            println!("RPC URL: {}", network.config().rpc_url);
+            if let Some(faucet) = network.config().faucet_url {
+                println!("Faucet URL: {}", faucet);
+            }
+        }
         Commands::Faucet { address } => {
             handle_faucet(address, network).await?;
         }
-        Commands::Network => {
-            handle_network_info(network);
+        Commands::ShowAddress { network: _ } => {
+            use crate::crypto::decode_private_key;
+
+            // config здесь - переменная, а не модуль
+            let private_key_str = config
+                .private_key
+                .ok_or_else(|| anyhow!("Приватный ключ не найден в конфигурации"))?;
+
+            println!("\n🔍 Определение адреса из приватного ключа...\n");
+
+            // Определяем тип ключа и декодируем
+            let signing_key = if private_key_str.starts_with('s') {
+                println!("📋 Обнаружен XRP Family Seed (начинается с 's')");
+                println!(
+                    "   Seed: {}...{}",
+                    &private_key_str[..4],
+                    &private_key_str[private_key_str.len() - 4..]
+                );
+
+                // Пока просто возвращаем ошибку, так как модуль seed еще не создан
+                return Err(anyhow!(
+                    "Поддержка XRP seed пока не реализована. Используйте hex приватный ключ."
+                ));
+            } else {
+                println!("🔑 Обнаружен приватный ключ в hex формате");
+                decode_private_key(&private_key_str)
+                    .context("Не удалось декодировать приватный ключ")?
+            };
+
+            // Получаем публичный ключ
+            let public_key = derive_public_key(&signing_key)?;
+            // Генерируем адрес
+            // Если public_key это Vec<u8>, преобразуем его в VerifyingKey
+            let verifying_key = if public_key.len() == 33 {
+                // Compressed public key
+                let public_key_point = PublicKey::from_sec1_bytes(&public_key)
+                    .context("Не удалось декодировать публичный ключ")?;
+                VerifyingKey::from(&public_key_point)
+            } else {
+                return Err(anyhow!("Неверный формат публичного ключа"));
+            };
+
+            let address = derive_xrp_address_from_public_key(&verifying_key)?;
+
+            // Выводим результаты
+            println!("\n✅ Адрес успешно определен!\n");
+            println!("📍 Ваш XRP адрес: {}", address);
+            println!("\n💡 Используйте этот адрес для:");
+            println!("   • Проверки баланса: cargo run -- balance {}", address);
+            println!(
+                "   • Отправки XRP: cargo run -- send --from {} --to <адрес> --amount <сумма>",
+                address
+            );
+            println!("\n⚠️  Убедитесь, что адрес имеет достаточный баланс перед отправкой!");
         }
     }
 

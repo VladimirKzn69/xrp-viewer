@@ -3,3 +3,6 @@
 .env
 /target
 *.log
+error_output.sh
+export_project.sh
+
