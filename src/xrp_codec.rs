@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 // use base58::FromBase58;
-use sha2::{Digest, Sha512};
+// use sha2::{Digest, Sha512};
 
 // =====================================
 // 📊 КОНСТАНТЫ И ТИПЫ ПОЛЕЙ XRP
@@ -178,6 +178,16 @@ impl XrpBinaryCodec {
     pub fn get_signing_buffer(&self) -> Vec<u8> {
         self.buffer.clone()
     }
+    /// Добавить произвольные данные в конец буфера.
+    /// Использовать с осторожностью, чтобы не нарушить формат XRP Binary Codec.
+    pub fn extend_buffer(&mut self, data: &[u8]) {
+        self.buffer.extend_from_slice(data);
+    }
+    /// Создать новый экземпляр XrpBinaryCodec с уже заполненным буфером.
+    /// Используется для создания финального blob'а из данных для подписи.
+    pub fn from_buffer(buffer: Vec<u8>) -> Self {
+        Self { buffer }
+    }
 }
 
 // =====================================
@@ -330,18 +340,31 @@ pub fn decode_address_to_account_id(address: &str) -> Result<Vec<u8>> {
     crate::crypto::decode_address_to_account_id(address)
 }
 
-/// Хэшировать данные для подписи с префиксом XRP
+/// Хэшировать данные для подписи с префиксом XRP (двойной SHA256)
 pub fn hash_for_signing(signing_data: &[u8]) -> Vec<u8> {
+    // <-- Исправлено: добавлено имя параметра `signing_data`
+    use sha2::{Digest, Sha256};
+
+    log::debug!("🔐 Хеширование данных для подписи...");
+    log::debug!("   Размер исходных данных: {} байт", signing_data.len());
+    log::debug!("   Префикс: {:?}", b"STX\0");
+
     // XRP использует префикс "STX\0" для подписания транзакций
     let prefix = b"STX\0";
-
-    let mut hasher = Sha512::new();
+    let mut hasher = Sha256::new();
     hasher.update(prefix);
     hasher.update(signing_data);
     let hash = hasher.finalize();
 
-    // Возвращаем первые 32 байта
-    hash[..32].to_vec()
+    // Двойной SHA256
+    let mut hasher2 = Sha256::new();
+    hasher2.update(&hash);
+    let final_hash = hasher2.finalize();
+
+    log::debug!("   Финальный хеш для подписи: {} байт", final_hash.len());
+    log::debug!("   Хеш (HEX): {}", hex::encode(&final_hash));
+
+    final_hash.to_vec()
 }
 
 // =====================================

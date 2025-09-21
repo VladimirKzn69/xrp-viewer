@@ -234,6 +234,7 @@ impl XrpApi {
     pub async fn submit_transaction(&self, tx_blob: &str) -> Result<SubmitResult> {
         log::info!("Отправка транзакции в сеть...");
         log::debug!("TX Blob length: {} bytes", tx_blob.len());
+        log::debug!("TX Blob (HEX): {}", tx_blob);
 
         let request = json!({
             "method": "submit",

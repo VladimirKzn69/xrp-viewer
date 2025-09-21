@@ -12,9 +12,10 @@ use k256::ecdsa::{SigningKey, VerifyingKey};
 use sha2::{Digest, Sha256};
 
 // Импортируем наш новый XRP codec
-// use crate::xrp_codec::encode as encode_xrp;
-// use crate::crypto::xrp_base58_encode as encode_xrp;
+
+use crate::xrp_codec::hash_for_signing;
 use crate::xrp_codec::PaymentTransaction;
+use crate::xrp_codec::XrpBinaryCodec;
 
 // =====================================
 // 🎯 XRP BASE58 КОДЕК
@@ -326,13 +327,13 @@ pub fn derive_public_key(private_key: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Подписывает данные приватным ключом для XRP
+/// Подписывает данные приватным ключом для XRP
 pub fn sign_blob(data: &[u8], private_key: &[u8]) -> Result<Vec<u8>> {
     use k256::ecdsa::{signature::Signer, Signature, SigningKey};
-    use sha2::{Digest, Sha256};
 
     log::debug!("🔏 Подписываем данные...");
-    log::debug!("   Размер данных: {} байт", data.len());
-    log::debug!("   Размер приватного ключа: {} байт", private_key.len());
+    log::debug!(" Размер данных: {} байт", data.len());
+    log::debug!(" Размер приватного ключа: {} байт", private_key.len());
 
     // Проверяем размер приватного ключа
     if private_key.len() != 32 {
@@ -342,31 +343,21 @@ pub fn sign_blob(data: &[u8], private_key: &[u8]) -> Result<Vec<u8>> {
         ));
     }
 
-    // Хешируем данные с префиксом для XRP
-    let mut hasher = Sha256::new();
-    hasher.update(b"STX\0"); // Префикс для подписываемых транзакций
-    hasher.update(data);
-    let hash = hasher.finalize();
-
-    log::debug!("   Хеш для подписи: {} байт", hash.len());
-
-    // Еще раз хешируем (double SHA256 для XRP)
-    let mut hasher2 = Sha256::new();
-    hasher2.update(&hash);
-    let final_hash = hasher2.finalize();
+    // Получаем хеш для подписи через нашу функцию
+    let final_hash = hash_for_signing(data);
+    log::debug!(" Используем хеш для подписи: {} байт", final_hash.len());
 
     // Создаем ключ для подписи
     let signing_key = SigningKey::from_slice(private_key)
         .map_err(|e| anyhow!("Не удалось создать signing key: {}", e))?;
 
     // Подписываем
-    let signature: Signature = signing_key.sign(&final_hash[..]);
+    let signature: Signature = signing_key.sign(&final_hash);
 
     // Конвертируем в DER формат
     let der_bytes = signature.to_der().to_bytes().to_vec();
-
-    log::debug!("   ✅ Подпись создана: {} байт", der_bytes.len());
-
+    log::debug!(" ✅ Подпись создана: {} байт", der_bytes.len());
+    log::debug!(" Подпись (HEX): {}", hex::encode(&der_bytes));
     Ok(der_bytes)
 }
 
@@ -413,49 +404,43 @@ pub fn canonical_serialize(
 
 /// Создаёт финальный tx_blob с подписью
 pub fn create_signed_tx_blob(
-    _transaction_blob: Vec<u8>,
+    transaction_for_signing: Vec<u8>, // Сериализованная транзакция БЕЗ подписи
     signature_der: Vec<u8>,
     public_key: Vec<u8>,
-    common: &TransactionCommonFields,
-    payment: &PaymentFields,
+    _common: &TransactionCommonFields,
+    _payment: &PaymentFields,
 ) -> Result<String> {
     log::info!("📦 Создание финального tx_blob");
 
-    // Пересоздаём транзакцию для полной сериализации с подписью
-    let amount_drops = payment
-        .amount
-        .parse::<u64>()
-        .context("Не удалось распарсить amount")?;
-
-    let fee_drops = common
-        .fee
-        .parse::<u64>()
-        .context("Не удалось распарсить fee")?;
-
-    let mut tx = PaymentTransaction::new(
-        common.account.clone(),
-        payment.destination.clone(),
-        amount_drops,
-        fee_drops,
-        common.sequence,
+    log::debug!(
+        " Сериализованная транзакция для подписи: {} байт",
+        transaction_for_signing.len()
     );
+    log::debug!(" HEX: {}", hex::encode(&transaction_for_signing));
+    log::debug!(" Подпись DER: {} байт", signature_der.len());
+    log::debug!(" HEX: {}", hex::encode(&signature_der));
+    log::debug!(" Публичный ключ: {} байт", public_key.len());
+    log::debug!(" HEX: {}", hex::encode(&public_key));
 
-    tx.last_ledger_sequence = common.last_ledger_sequence;
+    // Создаем кодек с уже заполненным буфером
+    let mut codec = XrpBinaryCodec::from_buffer(transaction_for_signing); // <--- ИЗМЕНЕНО
 
-    // Создаём полный blob с подписью
-    let signed_blob = tx
-        .create_signed_blob(&public_key, &signature_der)
-        .context("Не удалось создать подписанный blob")?;
+    // Добавляем подпись и публичный ключ
+    codec.append_signature(&public_key, &signature_der); // <--- append_signature уже добавляет Field ID
+
+    let signed_blob = codec.finalize();
 
     // Конвертируем в HEX
     let hex_blob = hex::encode(&signed_blob);
-
     log::info!("✅ Финальный tx_blob создан: {} символов", hex_blob.len());
+    log::debug!(" Финальный blob (HEX): {}", hex_blob);
 
     // Для отладки - первые и последние байты
     if hex_blob.len() > 40 {
-        log::debug!("Начало blob: {}...", &hex_blob[..40]);
-        log::debug!("Конец blob: ...{}", &hex_blob[hex_blob.len() - 40..]);
+        log::debug!(" Начало blob: {}...", &hex_blob[..40]);
+        log::debug!(" Конец blob: ...{}", &hex_blob[hex_blob.len() - 40..]);
+    } else {
+        log::debug!(" Полный blob: {}", hex_blob);
     }
 
     Ok(hex_blob)
@@ -700,37 +685,36 @@ pub fn encode_check_xrp(data: &[u8]) -> Result<String> {
 
 /// Генерирует XRP адрес из seed (Family Seed)
 pub fn derive_xrp_address_from_seed(seed: &str) -> Result<String> {
-    use sha2::{Digest, Sha512};
     use k256::ecdsa::SigningKey;
-    
+    use sha2::{Digest, Sha512};
+
     // Декодируем seed из Base58
-    let decoded = xrp_base58_decode(seed)
-        .context("Не удалось декодировать seed")?;
-    
+    let decoded = xrp_base58_decode(seed).context("Не удалось декодировать seed")?;
+
     // Проверяем, что это действительно seed (тип 0x21 для secp256k1)
     if decoded.len() != 21 || decoded[0] != 0x21 {
         anyhow::bail!("Неверный формат XRP seed");
     }
-    
+
     // Получаем энтропию (без типа и контрольной суммы)
     let entropy = &decoded[1..17];
-    
+
     // Генерируем приватный ключ из seed
     let mut hasher = Sha512::new();
     hasher.update(entropy);
     hasher.update(&[0u8; 4]); // discriminant для secp256k1
     let hash = hasher.finalize();
-    
+
     // Берем первые 32 байта как приватный ключ
     let private_key_bytes = &hash[..32];
-    
+
     // Создаем SigningKey
     let signing_key = SigningKey::from_slice(private_key_bytes)
         .context("Не удалось создать приватный ключ из seed")?;
-    
+
     // Получаем публичный ключ
     let verifying_key = VerifyingKey::from(&signing_key);
-    
+
     // Генерируем адрес
     derive_xrp_address_from_public_key(&verifying_key)
 }
