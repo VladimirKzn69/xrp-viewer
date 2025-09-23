@@ -4,18 +4,20 @@
 use crate::models::{PaymentFields, TransactionCommonFields};
 use anyhow::{anyhow, Context, Result};
 use base58::FromBase58;
-// use k256::{
-//    ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey},
-//    SecretKey,
-// };
-use k256::ecdsa::{SigningKey, VerifyingKey};
-use sha2::{Digest, Sha256};
+use base64::{Engine as _, engine::general_purpose}; // Убедитесь, что импорт есть в начале файла или добавьте его
+
+// use k256::ecdsa::{SigningKey, VerifyingKey};
+use k256::elliptic_curve::generic_array::GenericArray;
+use k256::SecretKey;
+use sha2::{Digest, Sha256}; // Импортируем SecretKey
+
+use k256::ecdsa::{SigningKey, VerifyingKey}; // Убедитесь, что импорты правильные
+// use anyhow::Result; // или use crate::error::Result; если у вас свой тип Result
 
 // Импортируем наш новый XRP codec
-
 use crate::xrp_codec::hash_for_signing;
 use crate::xrp_codec::PaymentTransaction;
-use crate::xrp_codec::XrpBinaryCodec;
+use serde_json::json;
 
 // =====================================
 // 🎯 XRP BASE58 КОДЕК
@@ -403,47 +405,53 @@ pub fn canonical_serialize(
 }
 
 /// Создаёт финальный tx_blob с подписью
+use crate::xrp_codec::{FIELD_ID_SIGNATURE, FIELD_ID_SIGNING_PUB_KEY};
+
+/// Создает финальный tx_blob для отправки в сеть XRP Ledger.
+/// Сериализует транзакцию, включая подпись и публичный ключ, в правильном порядке.
 pub fn create_signed_tx_blob(
-    transaction_for_signing: Vec<u8>, // Сериализованная транзакция БЕЗ подписи
-    signature_der: Vec<u8>,
+    // common_fields: &TransactionCommonFields, // Не используем напрямую
+    // payment_fields: &PaymentFields,         // Не используем напрямую
+    // Передаем отдельные поля для правильной сериализации
+    transaction_type: TransactionType,
+    account: Account,
+    fee: Fee,
+    sequence: Sequence,
+    destination: Destination,
+    amount: Amount,
+    last_ledger_sequence: LastLedgerSequence,
+    signature: Vec<u8>,
     public_key: Vec<u8>,
-    _common: &TransactionCommonFields,
-    _payment: &PaymentFields,
 ) -> Result<String> {
-    log::info!("📦 Создание финального tx_blob");
+    log::info!("📦 Создание финального tx_blob с канонической сериализацией");
 
-    log::debug!(
-        " Сериализованная транзакция для подписи: {} байт",
-        transaction_for_signing.len()
-    );
-    log::debug!(" HEX: {}", hex::encode(&transaction_for_signing));
-    log::debug!(" Подпись DER: {} байт", signature_der.len());
-    log::debug!(" HEX: {}", hex::encode(&signature_der));
-    log::debug!(" Публичный ключ: {} байт", public_key.len());
-    log::debug!(" HEX: {}", hex::encode(&public_key));
+    // Создаем JSON-объект, включающий все поля, включая подпись и публичный ключ
+    // Порядок полей в JSON не важен, XrpBinaryCodec должен отсортировать их правильно.
+    let signed_tx_json = json!({
+        "TransactionType": transaction_type,
+        "Account": account,
+        "Fee": fee,
+        "Sequence": sequence,
+        "Destination": destination,
+        "Amount": amount,
+        "LastLedgerSequence": last_ledger_sequence,
+        "SigningPubKey": SigningPubKey(public_key), // Оберните в соответствующий тип, если ваш код так требует
+        "Signature": Signature(signature),         // Оберните в соответствующий тип, если ваш код так требует
+        // Добавьте другие поля, если они есть (например, Flags, если используются)
+    });
 
-    // Создаем кодек с уже заполненным буфером
-    let mut codec = XrpBinaryCodec::from_buffer(transaction_for_signing); // <--- ИЗМЕНЕНО
+    // Сериализуем подписанный JSON в бинарный формат
+    // Предполагается, что XrpBinaryCodec внутри себя правильно сортирует поля.
+    let signed_blob_bytes = XrpBinaryCodec::serialize(&signed_tx_json)
+        .context("Не удалось сериализовать подписанную транзакцию")?;
 
-    // Добавляем подпись и публичный ключ
-    codec.append_signature(&public_key, &signature_der); // <--- append_signature уже добавляет Field ID
+    // Кодируем в Base64 для отправки
+    let tx_blob = general_purpose::STANDARD.encode(&signed_blob_bytes);
 
-    let signed_blob = codec.finalize();
+    log::debug!("Финальный blob (HEX): {}", hex::encode(&signed_blob_bytes));
+    log::info!("✅ Финальный tx_blob создан: {} символов", tx_blob.len());
 
-    // Конвертируем в HEX
-    let hex_blob = hex::encode(&signed_blob);
-    log::info!("✅ Финальный tx_blob создан: {} символов", hex_blob.len());
-    log::debug!(" Финальный blob (HEX): {}", hex_blob);
-
-    // Для отладки - первые и последние байты
-    if hex_blob.len() > 40 {
-        log::debug!(" Начало blob: {}...", &hex_blob[..40]);
-        log::debug!(" Конец blob: ...{}", &hex_blob[hex_blob.len() - 40..]);
-    } else {
-        log::debug!(" Полный blob: {}", hex_blob);
-    }
-
-    Ok(hex_blob)
+    Ok(tx_blob)
 }
 
 /// Кодирует публичный ключ в XRP адрес
@@ -566,7 +574,7 @@ pub fn decode_xrp_secret(secret: &str) -> Result<Vec<u8>> {
 }
 
 /// Универсальная функция для декодирования приватного ключа из разных форматов
-pub fn decode_private_key(key_str: &str) -> Result<Vec<u8>> {
+pub fn decode_private_key(key_str: &str) -> Result<(SigningKey, VerifyingKey, String)>  {
     let key_str = key_str.trim(); // Убираем пробелы
 
     log::info!("🔑 Определяем формат приватного ключа...");
@@ -628,6 +636,75 @@ pub fn derive_public_key_from_private(private_key: &SigningKey) -> Result<Verify
 }
 
 /// Генерация XRP адреса из публичного ключа
+/// Деривация адреса из XRP Family Seed (начинается на 's')
+/// ✅ ИСПРАВЛЕННАЯ реализация - использует SHA512 с "ripple seed" passphrase
+pub fn derive_xrp_address_from_seed(
+    seed: &str,
+) -> Result<(k256::SecretKey, k256::ecdsa::VerifyingKey, String), anyhow::Error> {
+    log::debug!("🔐 Деривация ключа из XRP Family Seed: {}", seed);
+
+    // 1. Декодируем seed из XRP Base58
+    let decoded_seed = xrp_base58_decode(seed)?;
+    log::debug!(
+        " 🔑 Декодированный seed ({} байт): {:?}",
+        decoded_seed.len(),
+        decoded_seed
+    );
+
+    // 2. Проверяем длину (должно быть 17 байт: 1 байт префикса + 16 байт энтропии)
+    if decoded_seed.len() != 17 {
+        anyhow::bail!(
+            "Неверная длина Family Seed: {} байт (ожидается 17)",
+            decoded_seed.len()
+        );
+    }
+
+    // 3. Проверяем префикс (должен быть 0x21 для 's' или 0x23 для 'p')
+    let prefix = decoded_seed[0];
+    if prefix != 0x21 && prefix != 0x23 {
+        anyhow::bail!(
+            "Неверный префикс Family Seed: 0x{:02X} (ожидается 0x21 или 0x23)",
+            prefix
+        );
+    }
+
+    // 4. Извлекаем 16-байтную энтропию
+    let mut entropy = [0u8; 16];
+    entropy.copy_from_slice(&decoded_seed[1..17]);
+    log::debug!(" 🧬 Энтропия (16 байт): {:?}", entropy);
+
+    // ✅ ИСПРАВЛЕНИЕ: Используем правильный алгоритм деривации приватного ключа
+    // Это имитирует алгоритм secp256k1_key_hint или RFC1751 для XRP Family Seeds
+    use sha2::{Digest, Sha512};
+    let mut hasher = Sha512::new();
+    hasher.update(b"ripple seed"); // Используем "passphrase" как в RFC1751
+    hasher.update(&entropy); // Добавляем энтропию
+    let hash_result = hasher.finalize();
+
+    // Берем первые 32 байта хеша как кандидат на приватный ключ
+    let mut private_key_candidate = [0u8; 32];
+    private_key_candidate.copy_from_slice(&hash_result[..32]);
+    log::debug!(
+        " 🔐 Кандидат на приватный ключ (первые 32 байта SHA512('ripple seed' || entropy)): {:?}",
+        private_key_candidate
+    );
+
+    // ВАЖНО: Приватный ключ должен быть допустимым для secp256k1.
+    // k256::SecretKey::from_bytes автоматически проверит это (ненулевой, < n)
+    let signing_key = k256::SecretKey::from_bytes((&private_key_candidate[..]).into())
+        .map_err(|e| anyhow::anyhow!("Неверный формат приватного ключа из seed (k256 check failed): {}. Это может указывать на проблему с алгоритмом деривации или seed.", e))?;
+
+    // 5. Получаем публичный ключ
+    let verifying_key = signing_key.verifying_key();
+
+    // 6. Генерируем адрес из публичного ключа
+    let address = derive_xrp_address_from_public_key(&verifying_key)?;
+    log::debug!(" 📬 Адрес, полученный из seed: {}", address);
+
+    Ok((signing_key, verifying_key, address))
+}
+
+/// Генерация XRP адреса из публичного ключа (VerifyingKey)
 ///
 /// # Алгоритм
 /// 1. Сжимаем публичный ключ в 33 байта
@@ -635,15 +712,15 @@ pub fn derive_public_key_from_private(private_key: &SigningKey) -> Result<Verify
 /// 3. RIPEMD160 хеширование результата SHA256
 /// 4. Добавляем префикс 0x00 для mainnet
 /// 5. Base58Check кодирование с XRP алфавитом
-// Полная исправленная функция:
-pub fn derive_xrp_address_from_public_key(public_key: &VerifyingKey) -> Result<String> {
+pub fn derive_xrp_address_from_public_key(
+    public_key: &k256::ecdsa::VerifyingKey,
+) -> Result<String, anyhow::Error> {
     use ripemd::Ripemd160;
     use sha2::{Digest, Sha256};
 
     // Получаем сжатый публичный ключ (33 байта)
     let public_key_point = public_key.to_encoded_point(true);
     let public_key_bytes = public_key_point.as_bytes();
-
     log::debug!(
         "Public key compressed (hex): {}",
         hex::encode(public_key_bytes)
@@ -658,9 +735,8 @@ pub fn derive_xrp_address_from_public_key(public_key: &VerifyingKey) -> Result<S
     payload.push(0x00); // Mainnet prefix
     payload.extend_from_slice(&ripemd160_hash);
 
-    // Используем encode_xrp вместо encode_check_xrp
+    // Используем encode_check_xrp для Base58Check кодирования
     let address = encode_check_xrp(&payload)?;
-
     log::debug!("Generated XRP address: {}", address);
 
     Ok(address)
@@ -681,42 +757,6 @@ pub fn encode_check_xrp(data: &[u8]) -> Result<String> {
 
     // Кодируем в Base58 с XRP алфавитом
     Ok(xrp_base58_encode(&result))
-}
-
-/// Генерирует XRP адрес из seed (Family Seed)
-pub fn derive_xrp_address_from_seed(seed: &str) -> Result<String> {
-    use k256::ecdsa::SigningKey;
-    use sha2::{Digest, Sha512};
-
-    // Декодируем seed из Base58
-    let decoded = xrp_base58_decode(seed).context("Не удалось декодировать seed")?;
-
-    // Проверяем, что это действительно seed (тип 0x21 для secp256k1)
-    if decoded.len() != 21 || decoded[0] != 0x21 {
-        anyhow::bail!("Неверный формат XRP seed");
-    }
-
-    // Получаем энтропию (без типа и контрольной суммы)
-    let entropy = &decoded[1..17];
-
-    // Генерируем приватный ключ из seed
-    let mut hasher = Sha512::new();
-    hasher.update(entropy);
-    hasher.update(&[0u8; 4]); // discriminant для secp256k1
-    let hash = hasher.finalize();
-
-    // Берем первые 32 байта как приватный ключ
-    let private_key_bytes = &hash[..32];
-
-    // Создаем SigningKey
-    let signing_key = SigningKey::from_slice(private_key_bytes)
-        .context("Не удалось создать приватный ключ из seed")?;
-
-    // Получаем публичный ключ
-    let verifying_key = VerifyingKey::from(&signing_key);
-
-    // Генерируем адрес
-    derive_xrp_address_from_public_key(&verifying_key)
 }
 
 // =====================================
@@ -776,7 +816,35 @@ mod tests {
     }
 
     #[test]
-    // Замените тест test_canonical_serialize в crypto.rs на эту версию с отладкой:
+    fn test_derive_xrp_address_from_seed_correct() {
+        // Инициализируем логгер для теста
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        // Тестовые данные из verify_seed_js.txt
+        let seed = "snd62Yu2MKbnPtLa6vYRLFPMMdZE5";
+        // Адрес, который должен быть получен из этого seed (получен из JS-скрипта)
+        let expected_address = "rpD6vsa5k8yPKPNYsqzbV6aDchd528e26Z";
+
+        let result = derive_xrp_address_from_seed(seed);
+        assert!(
+            result.is_ok(),
+            "Деривация должна быть успешной, ошибка: {:?}",
+            result.err()
+        );
+
+        let (_signing_key, _verifying_key, derived_address) = result.unwrap();
+
+        assert_eq!(
+            derived_address, expected_address,
+            "Адрес, полученный из seed, не совпадает с ожидаемым. Получено: {}, Ожидается: {}",
+            derived_address, expected_address
+        );
+        println!(
+            "✅ Адрес, полученный из seed '{}': {}",
+            seed, derived_address
+        );
+    }
+
     #[test]
     fn test_canonical_serialize() {
         // Инициализируем логирование для теста

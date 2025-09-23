@@ -13,6 +13,10 @@ use anyhow::Result;
 // 📊 КОНСТАНТЫ И ТИПЫ ПОЛЕЙ XRP
 // =====================================
 
+// В src/xrp_codec.rs или рядом
+pub const FIELD_ID_SIGNATURE: u8 = 0x74; // Field ID for "Signature"
+pub const FIELD_ID_SIGNING_PUB_KEY: u8 = 0x03; // Field ID for "SigningPubKey"
+
 /// Типы данных в XRP (Type Codes)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FieldType {

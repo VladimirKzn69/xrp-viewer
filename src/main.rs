@@ -4,7 +4,9 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::str::FromStr;
 
-use k256::ecdsa::VerifyingKey;
+use k256::ecdsa::{SigningKey, VerifyingKey}; // Импорт типов
+use crate::crypto::decode_private_key; // Импорт функции
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::PublicKey;
 
 // Подключаем наши модули
@@ -110,6 +112,7 @@ async fn main() -> Result<()> {
         Commands::Balance { address } => {
             handle_balance(address, network).await?;
         }
+        //
         Commands::Send {
             from,
             to,
@@ -132,58 +135,48 @@ async fn main() -> Result<()> {
         }
         Commands::ShowAddress { network: _ } => {
             use crate::crypto::decode_private_key;
-
-            // config здесь - переменная, а не модуль
+            use k256::elliptic_curve::sec1::ToEncodedPoint; // Добавляем импорт
+                                                            // config здесь - переменная, а не модуль
             let private_key_str = config
                 .private_key
-                .ok_or_else(|| anyhow!("Приватный ключ не найден в конфигурации"))?;
+                .context("Приватный ключ не найден в .env")?;
 
-            println!("\n🔍 Определение адреса из приватного ключа...\n");
+            println!("🔐 Определение адреса из приватного ключа...");
 
-            // Определяем тип ключа и декодируем
-            let signing_key = if private_key_str.starts_with('s') {
-                println!("📋 Обнаружен XRP Family Seed (начинается с 's')");
+            // Проверяем формат ключа
+            if private_key_str.starts_with('s') || private_key_str.starts_with('p') {
+                println!("🔑 Обнаружен XRP Family Seed (начинается на 's' или 'p')");
+                // Используем decode_private_key для получения SigningKey, VerifyingKey, Address
+                let (_signing_key, _verifying_key, address) = decode_private_key(&private_key_str)
+                    .context("Не удалось декодировать XRP Family Seed")?;
+                println!("✅ Адрес успешно определен!");
+                println!("📍 Ваш XRP адрес: {}", address);
+                // ... остальной вывод (можно оставить как есть, он ссылается на переменную address)
+                println!("💡 Используйте этот адрес для:");
+                println!(" • Проверки баланса: cargo run -- balance {}", address);
                 println!(
-                    "   Seed: {}...{}",
-                    &private_key_str[..4],
-                    &private_key_str[private_key_str.len() - 4..]
+                    " • Отправки XRP: cargo run -- send --from {} --to <адрес> --amount <сумма>",
+                    address
                 );
-
-                // Пока просто возвращаем ошибку, так как модуль seed еще не создан
-                return Err(anyhow!(
-                    "Поддержка XRP seed пока не реализована. Используйте hex приватный ключ."
-                ));
+                println!("⚠️ Убедитесь, что адрес имеет достаточный баланс перед отправкой!");
             } else {
                 println!("🔑 Обнаружен приватный ключ в hex формате");
-                decode_private_key(&private_key_str)
-                    .context("Не удалось декодировать приватный ключ")?
+                // Обновляем обработку результата decode_private_key для нового формата
+                let (signing_key, verifying_key, address) = decode_private_key(&private_key_str)
+                    .context("Не удалось декодировать приватный ключ")?;
+
+                // Выводим результаты
+                println!("✅ Адрес успешно определен!");
+                println!("📍 Ваш XRP адрес: {}", address);
+                // ... остальной вывод
+                println!("💡 Используйте этот адрес для:");
+                println!(" • Проверки баланса: cargo run -- balance {}", address);
+                println!(
+                    " • Отправки XRP: cargo run -- send --from {} --to <адрес> --amount <сумма>",
+                    address
+                );
+                println!("⚠️ Убедитесь, что адрес имеет достаточный баланс перед отправкой!");
             };
-
-            // Получаем публичный ключ
-            let public_key = derive_public_key(&signing_key)?;
-            // Генерируем адрес
-            // Если public_key это Vec<u8>, преобразуем его в VerifyingKey
-            let verifying_key = if public_key.len() == 33 {
-                // Compressed public key
-                let public_key_point = PublicKey::from_sec1_bytes(&public_key)
-                    .context("Не удалось декодировать публичный ключ")?;
-                VerifyingKey::from(&public_key_point)
-            } else {
-                return Err(anyhow!("Неверный формат публичного ключа"));
-            };
-
-            let address = derive_xrp_address_from_public_key(&verifying_key)?;
-
-            // Выводим результаты
-            println!("\n✅ Адрес успешно определен!\n");
-            println!("📍 Ваш XRP адрес: {}", address);
-            println!("\n💡 Используйте этот адрес для:");
-            println!("   • Проверки баланса: cargo run -- balance {}", address);
-            println!(
-                "   • Отправки XRP: cargo run -- send --from {} --to <адрес> --amount <сумма>",
-                address
-            );
-            println!("\n⚠️  Убедитесь, что адрес имеет достаточный баланс перед отправкой!");
         }
     }
 
@@ -277,35 +270,45 @@ async fn handle_send(
     }
 
     // Загружаем конфигурацию и приватный ключ
-    let config = Config::load(&key_file, network)?;
-    let private_key = config
+    let config = Config::load(&key_file, network.clone())?;
+    let private_key_str = config
         .private_key
         .ok_or_else(|| anyhow::anyhow!("Приватный ключ не найден в {}", key_file))?;
 
-    // Декодируем приватный ключ
-    let private_key_bytes =
-        decode_private_key(&private_key).context("Не удалось декодировать приватный ключ")?;
+    // --- ИСПРАВЛЕНИЕ ---
+    // Декодируем приватный ключ (обновляем обработку результата для нового формата)
+    // use k256::elliptic_curve::sec1::ToEncodedPoint; // Убедитесь, что импорт есть или добавьте его в начало файла
+    let (signing_key, verifying_key, from_address) = decode_private_key(&private_key_str)
+        .context("Не удалось декодировать приватный ключ из .env")?;
 
-    // ДОБАВЬТЕ ЭТИ СТРОКИ ДЛЯ ОТЛАДКИ:
-    log::info!(
-        "🔑 Размер декодированного приватного ключа: {} байт",
-        private_key_bytes.len()
-    );
-    log::debug!(
-        "   Первые 10 байт: {:?}",
-        &private_key_bytes[..10.min(private_key_bytes.len())]
-    );
+    // Проверяем, что адрес из ключа совпадает с указанным адресом `from`
+    if from_address != from {
+        anyhow::bail!(
+            "Адрес, полученный из приватного ключа ({}) не совпадает с указанным адресом отправителя ({}). Проверьте приватный ключ в {}.",
+            from_address,
+            from,
+            key_file
+        );
+    }
 
-    // Проверяем размер ключа
+    // Конвертируем SecretKey в Vec<u8> для последующих операций (если нужно)
+    // Например, для derive_public_key (если она ожидает &[u8])
+    let private_key_bytes: Vec<u8> = signing_key.to_bytes().to_vec();
+    // Конвертируем VerifyingKey в Vec<u8> (если нужно)
+    // let public_key_bytes: Vec<u8> = verifying_key.to_encoded_point(true).as_bytes().to_vec(); // true для сжатого
+
+    // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
+    // Проверяем размер ключа (это проверка всё ещё актуальна)
     if private_key_bytes.len() != 32 {
         anyhow::bail!(
-            "Неверный размер приватного ключа: {} байт (ожидается 32). \
-            Проверьте формат ключа в .env файле.",
+            "Неверный размер приватного ключа: {} байт (ожидается 32). Проверьте формат ключа в .env файле.",
             private_key_bytes.len()
         );
     }
 
     // Получаем публичный ключ
+    // Передаем &[u8] из Vec<u8>
     let public_key =
         derive_public_key(&private_key_bytes).context("Не удалось получить публичный ключ")?;
 
@@ -370,11 +373,15 @@ async fn handle_send(
 
     // Создаем подписанную транзакцию - передаем все 5 аргументов
     let tx_blob = create_signed_tx_blob(
-        canonical_json,  // Vec<u8> - без &
-        signature,       // Vec<u8> - без &
-        public_key,      // Vec<u8> - без &
-        &common_fields,  // &TransactionCommonFields
-        &payment_fields, // &PaymentFields
+        transaction_type,
+        account,
+        fee,
+        sequence,
+        destination,
+        amount,
+        last_ledger_sequence,
+        signature,
+        public_key,
     )
     .context("Не удалось создать tx_blob")?;
 

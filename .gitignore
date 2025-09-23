@@ -5,4 +5,4 @@
 *.log
 error_output.sh
 export_project.sh
-
+export_full_project.sh
