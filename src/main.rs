@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::str::FromStr;
 
-use k256::ecdsa::{SigningKey, VerifyingKey}; // Импорт типов
 use crate::crypto::decode_private_key; // Импорт функции
+use k256::ecdsa::{SigningKey, VerifyingKey}; // Импорт типов
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::PublicKey;
 
@@ -22,8 +22,7 @@ mod xrp_codec;
 use crate::crypto::derive_xrp_address_from_public_key;
 use api::XrpApi;
 use crypto::{
-    canonical_serialize, create_signed_tx_blob, decode_private_key, derive_public_key,
-    is_valid_xrp_address, sign_blob,
+    canonical_serialize, create_signed_tx_blob, derive_public_key, is_valid_xrp_address, sign_blob,
 };
 use display::DisplayFormatter;
 use models::{PaymentFields, TransactionCommonFields};
@@ -373,13 +372,13 @@ async fn handle_send(
 
     // Создаем подписанную транзакцию - передаем все 5 аргументов
     let tx_blob = create_signed_tx_blob(
-        transaction_type,
-        account,
-        fee,
-        sequence,
-        destination,
-        amount,
-        last_ledger_sequence,
+        &common_fields.transaction_type,
+        &common_fields.account,
+        &common_fields.fee,
+        common_fields.sequence,
+        &payment_fields.destination,
+        &payment_fields.amount,
+        common_fields.last_ledger_sequence,
         signature,
         public_key,
     )

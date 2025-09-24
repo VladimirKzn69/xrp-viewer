@@ -4,20 +4,20 @@
 use crate::models::{PaymentFields, TransactionCommonFields};
 use anyhow::{anyhow, Context, Result};
 use base58::FromBase58;
-use base64::{Engine as _, engine::general_purpose}; // Убедитесь, что импорт есть в начале файла или добавьте его
+use base64::{engine::general_purpose, Engine as _}; // Убедитесь, что импорт есть в начале файла или добавьте его
 
-// use k256::ecdsa::{SigningKey, VerifyingKey};
+use k256::ecdsa::{SigningKey, VerifyingKey}; // Убедитесь, что эти типы импортированы
 use k256::elliptic_curve::generic_array::GenericArray;
 use k256::SecretKey;
 use sha2::{Digest, Sha256}; // Импортируем SecretKey
 
-use k256::ecdsa::{SigningKey, VerifyingKey}; // Убедитесь, что импорты правильные
-// use anyhow::Result; // или use crate::error::Result; если у вас свой тип Result
-
 // Импортируем наш новый XRP codec
 use crate::xrp_codec::hash_for_signing;
-use crate::xrp_codec::PaymentTransaction;
+use crate::xrp_codec::{FieldId, PaymentTransaction, XrpBinaryCodec};
 use serde_json::json;
+
+use crate::xrp_codec::{FIELD_ID_SIGNATURE, FIELD_ID_SIGNING_PUB_KEY};
+use serde_json::Value; // Убедитесь, что этот импорт есть в начале файла
 
 // =====================================
 // 🎯 XRP BASE58 КОДЕК
@@ -317,7 +317,7 @@ pub fn derive_public_key(private_key: &[u8]) -> Result<Vec<u8>> {
         .map_err(|e| anyhow!("Не удалось создать signing key: {}", e))?;
 
     // Получаем публичный ключ
-    let verifying_key = signing_key.verifying_key();
+    let verifying_key = k256::ecdsa::VerifyingKey::from(&signing_key);
 
     // Преобразуем в сжатый формат (33 байта)
     let point = verifying_key.to_encoded_point(true);
@@ -404,48 +404,67 @@ pub fn canonical_serialize(
     Ok(serialized)
 }
 
-/// Создаёт финальный tx_blob с подписью
-use crate::xrp_codec::{FIELD_ID_SIGNATURE, FIELD_ID_SIGNING_PUB_KEY};
-
 /// Создает финальный tx_blob для отправки в сеть XRP Ledger.
 /// Сериализует транзакцию, включая подпись и публичный ключ, в правильном порядке.
+/// Поля должны быть предоставлены в уже сериализованном виде (например, строки для адресов и amounts).
 pub fn create_signed_tx_blob(
-    // common_fields: &TransactionCommonFields, // Не используем напрямую
-    // payment_fields: &PaymentFields,         // Не используем напрямую
-    // Передаем отдельные поля для правильной сериализации
-    transaction_type: TransactionType,
-    account: Account,
-    fee: Fee,
-    sequence: Sequence,
-    destination: Destination,
-    amount: Amount,
-    last_ledger_sequence: LastLedgerSequence,
-    signature: Vec<u8>,
-    public_key: Vec<u8>,
-) -> Result<String> {
+    transaction_type: &str,            // Тип транзакции, например "Payment"
+    account: &str,                     // Адрес отправителя
+    fee: &str,                         // Комиссия в drops, например "12"
+    sequence: u32,                     // Sequence номер
+    destination: &str,                 // Адрес получателя
+    amount: &str,                      // Сумма в drops, например "1000000"
+    last_ledger_sequence: Option<u32>, // LastLedgerSequence (опционально)
+    signature: Vec<u8>,                // Подпись (DER формат)
+    public_key: Vec<u8>,               // Публичный ключ (сжатый, 33 байта)
+) -> Result<String, anyhow::Error> {
+    // Явно указываем тип ошибки
     log::info!("📦 Создание финального tx_blob с канонической сериализацией");
 
-    // Создаем JSON-объект, включающий все поля, включая подпись и публичный ключ
-    // Порядок полей в JSON не важен, XrpBinaryCodec должен отсортировать их правильно.
-    let signed_tx_json = json!({
-        "TransactionType": transaction_type,
-        "Account": account,
-        "Fee": fee,
-        "Sequence": sequence,
-        "Destination": destination,
-        "Amount": amount,
-        "LastLedgerSequence": last_ledger_sequence,
-        "SigningPubKey": SigningPubKey(public_key), // Оберните в соответствующий тип, если ваш код так требует
-        "Signature": Signature(signature),         // Оберните в соответствующий тип, если ваш код так требует
-        // Добавьте другие поля, если они есть (например, Flags, если используются)
-    });
+    // --- НОВЫЙ КОД ---
+    log::debug!("📦 Подготовка PaymentTransaction для финальной сериализации");
 
-    // Сериализуем подписанный JSON в бинарный формат
-    // Предполагается, что XrpBinaryCodec внутри себя правильно сортирует поля.
-    let signed_blob_bytes = XrpBinaryCodec::serialize(&signed_tx_json)
+    // Конвертируем строковые значения в нужные типы
+    let fee_drops: u64 = fee
+        .parse()
+        .with_context(|| format!("Не удалось распарсить fee '{}'", fee))?;
+    let amount_drops: u64 = amount
+        .parse()
+        .with_context(|| format!("Не удалось распарсить amount '{}'", amount))?;
+
+    // Создаём структуру транзакции PaymentTransaction
+    // Используем те же поля, что и в canonical_serialize
+    let tx = PaymentTransaction::new(
+        account.to_string(),     // account
+        destination.to_string(), // destination
+        amount_drops,            // amount
+        fee_drops,               // fee
+        sequence,                // sequence
+    );
+    // Устанавливаем опциональные поля
+    let mut tx = tx; // Делаем изменяемым
+    tx.last_ledger_sequence = last_ledger_sequence; // Устанавливаем LastLedgerSequence, если есть
+
+    log::debug!("📦 Транзакция до добавления подписи: {:?}", tx);
+
+    // Подписываем транзакцию, добавляя байты подписи и публичного ключа
+    // Предположим, что у PaymentTransaction есть метод sign, который устанавливает поля signature и signing_pub_key
+    // и возвращает новую/изменённую структуру.
+    // ВАЖНО: Убедитесь, что в xrp_codec.rs реализован метод sign для PaymentTransaction!
+    // Если его нет, его нужно добавить (см. предыдущее обсуждение).
+    let signed_tx = tx
+        .sign(signature, public_key)
+        .context("Не удалось добавить подпись и публичный ключ к транзакции")?;
+
+    log::debug!("📦 Подписанная транзакция: {:?}", signed_tx);
+
+    // Сериализуем подписанную транзакцию в бинарный формат (Blob)
+    let signed_blob_bytes = signed_tx
+        .serialize()
         .context("Не удалось сериализовать подписанную транзакцию")?;
+    // --- КОНЕЦ НОВОГО КОДА ---
 
-    // Кодируем в Base64 для отправки
+    // Кодируем в Base64 для отправки в API
     let tx_blob = general_purpose::STANDARD.encode(&signed_blob_bytes);
 
     log::debug!("Финальный blob (HEX): {}", hex::encode(&signed_blob_bytes));
@@ -574,56 +593,58 @@ pub fn decode_xrp_secret(secret: &str) -> Result<Vec<u8>> {
 }
 
 /// Универсальная функция для декодирования приватного ключа из разных форматов
-pub fn decode_private_key(key_str: &str) -> Result<(SigningKey, VerifyingKey, String)>  {
-    let key_str = key_str.trim(); // Убираем пробелы
+/// Декодирует приватный ключ из строки (HEX или XRP Family Seed).
+/// Возвращает кортеж (SigningKey, VerifyingKey, XRP Address).
+pub fn decode_private_key(
+    key_str: &str,
+) -> Result<(SigningKey, VerifyingKey, String), anyhow::Error> {
+    if key_str.starts_with('s') || key_str.starts_with('p') {
+        // XRP Family Seed
+        log::debug!("🔑 Обнаружен XRP Family Seed (начинается на 's' или 'p')");
 
-    log::info!("🔑 Определяем формат приватного ключа...");
-    log::debug!("   Первые символы: {}", &key_str[..4.min(key_str.len())]);
-    log::debug!("   Длина: {} символов", key_str.len());
+        // Вызываем нашу исправленную функцию, которая возвращает (SigningKey, VerifyingKey, String)
+        let (signing_key, verifying_key, address) = derive_xrp_address_from_seed(key_str)?;
+        log::debug!("🔐 Приватный ключ (SecretKey) получен из seed");
+        log::debug!("🔑 Публичный ключ (VerifyingKey) получен из seed");
+        log::debug!("📬 Адрес: {}", address);
 
-    let result = if key_str.starts_with('s') {
-        // XRP Secret Key (Family Seed)
-        log::info!("📝 Обнаружен XRP secret key (Family Seed)");
-        decode_xrp_secret(key_str)?
-    } else if key_str.starts_with('L') || key_str.starts_with('K') || key_str.starts_with('5') {
-        // WIF формат
-        log::info!("📝 Обнаружен WIF формат ключа");
-        decode_wif(key_str)?
-    } else if key_str.len() == 64 && key_str.chars().all(|c| c.is_ascii_hexdigit()) {
-        // Hex формат (64 символа = 32 байта)
-        log::info!("📝 Обнаружен HEX формат ключа");
-        hex::decode(key_str).context("Не удалось декодировать hex приватный ключ")?
-    } else if key_str.starts_with("0x") && key_str.len() == 66 {
-        // Hex формат с префиксом 0x
-        log::info!("📝 Обнаружен HEX формат с префиксом 0x");
-        hex::decode(&key_str[2..]).context("Не удалось декодировать hex приватный ключ")?
+        // Возвращаем кортеж
+        Ok((signing_key.into(), verifying_key, address)) // Преобразуем SecretKey в SigningKey
     } else {
-        return Err(anyhow!(
-            "Неподдерживаемый формат приватного ключа.\n\
-             Обнаружен префикс: '{}'\n\
-             Длина: {} символов\n\
-             Поддерживаются форматы:\n\
-             - XRP secret (начинается с 's', например: sEd7rBGm5kxzauRT...)\n\
-             - WIF (начинается с 'L', 'K' или '5')\n\
-             - HEX (64 символа, например: ED4D6B5F3C96...)",
-            &key_str[..3.min(key_str.len())],
-            key_str.len()
-        ));
-    };
+        // HEX приватный ключ
+        log::debug!("🔑 Обнаружен HEX приватный ключ");
 
-    // ВАЖНО: Проверяем размер результата
-    if result.len() != 32 {
-        return Err(anyhow!(
-            "Декодированный ключ имеет неверный размер: {} байт (ожидается 32).\n\
-             Формат ключа: {}\n\
-             Это может быть проблема с форматом ключа в .env файле.",
-            result.len(),
-            &key_str[..4.min(key_str.len())]
-        ));
+        // Декодируем HEX
+        let private_key_bytes =
+            hex::decode(key_str).context("Не удалось декодировать HEX приватный ключ")?;
+        log::debug!(" 🔐 Декодировано {} байт из HEX", private_key_bytes.len());
+
+        // Проверяем размер
+        if private_key_bytes.len() != 32 {
+            anyhow::bail!(
+                "Неверный размер HEX приватного ключа: {} байт (ожидается 32)",
+                private_key_bytes.len()
+            );
+        }
+
+        // Создаём SigningKey из байт
+        let signing_key = SigningKey::from_slice(&private_key_bytes)
+            .map_err(|e| anyhow::anyhow!("Неверный формат приватного ключа: {}", e))?;
+        log::debug!(" 🔐 SigningKey создан из HEX");
+
+        // Получаем VerifyingKey
+        // --- ИСПРАВЛЕНИЕ ---
+        let verifying_key = VerifyingKey::from(&signing_key); // Используем VerifyingKey::from
+                                                              // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+        log::debug!(" 🔑 VerifyingKey получен из SigningKey");
+
+        // Генерируем адрес из VerifyingKey
+        let address = derive_xrp_address_from_public_key(&verifying_key)?; // Убедитесь, что эта функция существует и экспортирована
+        log::debug!(" 📬 Адрес: {}", address);
+
+        // Возвращаем кортеж
+        Ok((signing_key, verifying_key, address))
     }
-
-    log::info!("✅ Приватный ключ успешно декодирован: 32 байта");
-    Ok(result)
 }
 /// Деривация публичного ключа из приватного
 ///
@@ -690,18 +711,27 @@ pub fn derive_xrp_address_from_seed(
     );
 
     // ВАЖНО: Приватный ключ должен быть допустимым для secp256k1.
-    // k256::SecretKey::from_bytes автоматически проверит это (ненулевой, < n)
-    let signing_key = k256::SecretKey::from_bytes((&private_key_candidate[..]).into())
-        .map_err(|e| anyhow::anyhow!("Неверный формат приватного ключа из seed (k256 check failed): {}. Это может указывать на проблему с алгоритмом деривации или seed.", e))?;
+    // Создаем SecretKey из полученных байт
+    let signing_key_secret = k256::SecretKey::from_bytes((&private_key_candidate[..]).into())
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Неверный формат приватного ключа из seed (k256 check failed): {}",
+                e
+            )
+        })?;
 
     // 5. Получаем публичный ключ
-    let verifying_key = signing_key.verifying_key();
+    // 1. Преобразуем SecretKey в ecdsa::SigningKey
+    let signing_key_ecdsa = k256::ecdsa::SigningKey::from(&signing_key_secret);
+    // 2. Получаем VerifyingKey из ecdsa::SigningKey
+    let verifying_key = k256::ecdsa::VerifyingKey::from(&signing_key_ecdsa);
 
     // 6. Генерируем адрес из публичного ключа
     let address = derive_xrp_address_from_public_key(&verifying_key)?;
     log::debug!(" 📬 Адрес, полученный из seed: {}", address);
 
-    Ok((signing_key, verifying_key, address))
+    // Преобразуем SecretKey в SigningKey при возврате
+    Ok((signing_key_secret.into(), verifying_key, address))
 }
 
 /// Генерация XRP адреса из публичного ключа (VerifyingKey)

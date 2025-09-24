@@ -160,17 +160,24 @@ impl XrpBinaryCodec {
         self.buffer.extend_from_slice(data);
     }
 
-    /// Добавить подпись и публичный ключ
-    pub fn append_signature(&mut self, public_key: &[u8], signature: &[u8]) {
-        // SigningPubKey (всегда 33 байта для secp256k1 compressed)
-        self.buffer
-            .extend_from_slice(&FieldId::SigningPubKey.to_bytes());
-        self.append_variable_length(public_key);
+    /// Добавить SigningPubKey поле
+    pub fn append_signing_pub_key(&mut self, value: &[u8]) -> Result<(), anyhow::Error> {
+        // Field ID для SigningPubKey: 0x03 (Type: VL, Field: 3)
+        // Получаем байты Field ID
+        let field_id_bytes = FieldId::SigningPubKey.to_bytes();
+        self.buffer.extend_from_slice(&field_id_bytes);
+        self.append_variable_length(value);
+        Ok(())
+    }
 
-        // TxnSignature (переменная длина DER encoding)
-        self.buffer
-            .extend_from_slice(&FieldId::TxnSignature.to_bytes());
-        self.append_variable_length(signature);
+    /// Добавить TxnSignature поле
+    pub fn append_signature(&mut self, value: &[u8]) -> Result<(), anyhow::Error> {
+        // Field ID для TxnSignature: 0x74 (Type: VL, Field: 116)
+        // Получаем байты Field ID
+        let field_id_bytes = FieldId::TxnSignature.to_bytes();
+        self.buffer.extend_from_slice(&field_id_bytes);
+        self.append_variable_length(value);
+        Ok(())
     }
 
     /// Получить финальный буфер
@@ -210,6 +217,8 @@ pub struct PaymentTransaction {
     pub source_tag: Option<u32>,           // Тег отправителя (опционально)
     pub destination_tag: Option<u32>,      // Тег получателя (опционально)
     pub flags: u32,                        // Флаги транзакции
+    pub signature: Option<Vec<u8>>,
+    pub signing_pub_key: Option<Vec<u8>>,
 }
 
 impl PaymentTransaction {
@@ -225,6 +234,8 @@ impl PaymentTransaction {
             source_tag: None,
             destination_tag: None,
             flags: 0,
+            signature: None,
+            signing_pub_key: None,
         }
     }
 
@@ -280,6 +291,74 @@ impl PaymentTransaction {
         Ok(codec.finalize())
     }
 
+    /// Сериализовать подписанную транзакцию (включая поля подписи) в финальный бинарный blob.
+    /// ВАЖНО: Поля должны быть в каноническом порядке!
+    pub fn serialize(self) -> Result<Vec<u8>, anyhow::Error> {
+        let mut codec = XrpBinaryCodec::new();
+
+        // --- КАНОНИЧЕСКИЙ ПОРЯДОК ПОЛЕЙ ---
+        // 1. TransactionType
+        codec.append_uint16(FieldId::TransactionType, 0); // 0 для Payment
+
+        // 2. Flags (если не 0)
+        if self.flags != 0 {
+            codec.append_uint32(FieldId::Flags, self.flags);
+        }
+
+        // 3. SourceTag (если есть)
+        if let Some(tag) = self.source_tag {
+            codec.append_uint32(FieldId::SourceTag, tag);
+        }
+
+        // 4. Sequence
+        codec.append_uint32(FieldId::Sequence, self.sequence);
+
+        // 5. DestinationTag (если есть)
+        if let Some(tag) = self.destination_tag {
+            codec.append_uint32(FieldId::DestinationTag, tag);
+        }
+
+        // 6. LastLedgerSequence (если есть)
+        if let Some(lls) = self.last_ledger_sequence {
+            codec.append_uint32(FieldId::LastLedgerSequence, lls);
+        }
+
+        // 7. Amount
+        codec.append_xrp_amount(FieldId::Amount, self.amount);
+
+        // 8. Fee
+        codec.append_xrp_amount(FieldId::Fee, self.fee);
+
+        // 9. Account
+        codec.append_account(FieldId::Account, &self.account)?;
+
+        // 10. Destination
+        codec.append_account(FieldId::Destination, &self.destination)?;
+
+        // 11. SigningPubKey (если есть) - ДОЛЖНО БЫТЬ ПЕРЕД TxnSignature
+        if let Some(ref pub_key) = self.signing_pub_key {
+            codec.append_signing_pub_key(pub_key.as_slice())?;
+        }
+
+        // 12. TxnSignature (если есть) - ДОЛЖНО БЫТЬ ПОСЛЕДНИМ из подписных полей
+        if let Some(ref sig) = self.signature {
+            codec.append_signature(sig.as_slice())?;
+        }
+        // --- КОНЕЦ КАНОНИЧЕСКОГО ПОРЯДКА ---
+
+        Ok(codec.finalize())
+    }
+
+    pub fn sign(
+        mut self,
+        signature: Vec<u8>,
+        signing_pub_key: Vec<u8>,
+    ) -> Result<Self, anyhow::Error> {
+        self.signature = Some(signature);
+        self.signing_pub_key = Some(signing_pub_key);
+        Ok(self)
+    }
+
     /// Создать полный tx_blob с подписью
     pub fn create_signed_blob(&self, public_key: &[u8], signature: &[u8]) -> Result<Vec<u8>> {
         let mut codec = XrpBinaryCodec::new();
@@ -327,7 +406,8 @@ impl PaymentTransaction {
         codec.append_account(FieldId::Destination, &self.destination)?;
 
         // Добавляем подпись и публичный ключ
-        codec.append_signature(public_key, signature);
+        codec.append_signing_pub_key(public_key)?; // Убедитесь, что метод append_signing_pub_key реализован (см. ниже)
+        codec.append_signature(signature)?; // Передаём только подпись
 
         Ok(codec.finalize())
     }
